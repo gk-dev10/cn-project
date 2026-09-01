@@ -183,7 +183,11 @@ class ForwarderMultiHopTests(unittest.TestCase):
             # Check TTL was decremented.
             self.assertEqual(delivered_at_c[0]["ttl"], 4)
 
-            # B should have forwarding stats.
+            # B should have forwarding stats. C can receive before B's
+            # receiver thread finishes updating the counter, so wait briefly.
+            deadline = time.time() + 1
+            while time.time() < deadline and forwarder_b.stats().forwarded < 1:
+                time.sleep(0.01)
             stats_b = forwarder_b.stats()
             self.assertEqual(stats_b.forwarded, 1)
         finally:

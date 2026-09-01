@@ -9,3 +9,4 @@ dist/
 build/
 *.egg-info/
 implementation.md
+received_files/

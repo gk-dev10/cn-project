@@ -8,9 +8,13 @@ import time
 from typing import Tuple
 
 from application.file_transfer import FileTransferReceiver, FileTransferSender
+from application.location_service import LocationService
 from application.messaging import MessagingService
 from application.status_broadcast import StatusBroadcastService
+from dashboard.app import DashboardServer
 from core.constants import (
+    DEFAULT_DASHBOARD_HOST,
+    DEFAULT_DASHBOARD_PORT,
     DEFAULT_DISCOVERY_INTERVAL_SECONDS,
     DEFAULT_FILE_CHUNK_SIZE,
     DEFAULT_GBN_ACK_TIMEOUT_SECONDS,
@@ -21,19 +25,28 @@ from core.constants import (
     DEFAULT_RECEIVED_FILES_DIR,
     DEFAULT_RELIABLE_ACK_TIMEOUT_SECONDS,
     DEFAULT_RELIABLE_MAX_RETRIES,
+    DEFAULT_SELF_HEALING_INTERVAL_SECONDS,
+    DEFAULT_SIMULATED_DELAY_SECONDS,
+    DEFAULT_SIMULATED_JITTER_SECONDS,
+    DEFAULT_SIMULATED_LOSS_RATE,
     DEFAULT_STATUS_VALUE,
     PacketType,
 )
 from core.node import MeshNode
+from core.packet import create_packet
 from discovery.discovery_service import DiscoveryService
 from discovery.heartbeat_service import HeartbeatService
 from discovery.neighbor_manager import NeighborManager
 from relay.packet_forwarder import PacketForwarder
+from resilience.self_healing import SelfHealingManager
 from routing.routing_manager import RoutingManager, RoutingStrategy
+from routing.topology import NetworkTopology
+from simulator.network_simulator import NetworkSimulator
 from transport.adaptive_window import AdaptiveWindowController
 from transport.checksum_tracker import ChecksumTracker
 from transport.reliable_transport import ReliableTransport
 from transport.sliding_window import SlidingWindowReceiver, SlidingWindowSender
+from visualization.topology_visualizer import TopologyVisualizer
 
 
 def parse_endpoint(value: str) -> Tuple[str, int]:
@@ -56,7 +69,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-20.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-25.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -103,6 +116,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--im-safe", action="store_true", help="Broadcast an emergency SAFE status")
     parser.add_argument("--status", help="Broadcast a custom status value, for example SAFE or NEED_HELP")
     parser.add_argument("--status-listen", action="store_true", help="Listen for and relay STATUS broadcasts")
+    parser.add_argument("--latitude", type=float, help="Manual or simulated latitude for location/status payloads")
+    parser.add_argument("--longitude", type=float, help="Manual or simulated longitude for location/status payloads")
+    parser.add_argument("--location-label", default="MANUAL", help="Label for the configured location")
+    parser.add_argument("--sim-demo", action="store_true", help="Run a standalone network condition simulator demo")
+    parser.add_argument("--sim-packets", type=int, default=10, help="Packets to send in simulator demo")
+    parser.add_argument("--loss-rate", type=float, default=DEFAULT_SIMULATED_LOSS_RATE, help="Simulator packet loss rate")
+    parser.add_argument("--delay", type=float, default=DEFAULT_SIMULATED_DELAY_SECONDS, help="Simulator base delay in seconds")
+    parser.add_argument("--jitter", type=float, default=DEFAULT_SIMULATED_JITTER_SECONDS, help="Simulator jitter in seconds")
+    parser.add_argument("--fail-node", action="append", default=[], help="Mark a node failed in simulator/self-healing demos")
+    parser.add_argument("--self-heal", action="store_true", help="Enable stale-neighbor route cleanup and recovery hooks")
+    parser.add_argument("--self-heal-interval", type=float, default=DEFAULT_SELF_HEALING_INTERVAL_SECONDS)
+    parser.add_argument("--print-topology", action="store_true", help="Print topology, links, and routes periodically")
+    parser.add_argument("--dashboard", action="store_true", help="Serve the web dashboard for this node")
+    parser.add_argument("--dashboard-host", default=DEFAULT_DASHBOARD_HOST)
+    parser.add_argument("--dashboard-port", type=int, default=DEFAULT_DASHBOARD_PORT)
     return parser
 
 
@@ -128,6 +156,66 @@ def print_status(status_message) -> None:
     print(f"Status from {status_message.source}: {status_message.status}{suffix}")
 
 
+def build_location_service(
+    latitude: float | None = None,
+    longitude: float | None = None,
+    label: str = "MANUAL",
+) -> LocationService:
+    service = LocationService()
+    if latitude is None and longitude is None:
+        return service
+    if latitude is None or longitude is None:
+        raise ValueError("both --latitude and --longitude are required when setting location")
+    service.set_location(latitude=latitude, longitude=longitude, label=label)
+    return service
+
+
+def print_recovery(event) -> None:
+    removed = ", ".join(event.removed_routes) if event.removed_routes else "none"
+    print(f"Self-healing: removed failed node {event.failed_node}; purged routes: {removed}")
+
+
+def build_runtime_metrics(
+    neighbor_manager: NeighborManager,
+    routing_manager: RoutingManager | None = None,
+    forwarder: PacketForwarder | None = None,
+    file_receiver: FileTransferReceiver | None = None,
+    self_healer: SelfHealingManager | None = None,
+) -> dict:
+    metrics = {
+        "connected_nodes": len(neighbor_manager.active_neighbors()),
+        "known_nodes": len(neighbor_manager.all_neighbors()),
+    }
+
+    if routing_manager:
+        metrics["routes"] = len(routing_manager.current_routing_table())
+
+    if forwarder:
+        stats = forwarder.stats()
+        metrics.update(
+            {
+                "packets_forwarded": stats.forwarded,
+                "packets_delivered": stats.delivered_locally,
+                "packets_dropped": stats.dropped_ttl + stats.dropped_no_route + stats.dropped_checksum,
+            }
+        )
+
+    if file_receiver:
+        metrics["files_received"] = len(file_receiver.completed_files)
+
+    if self_healer:
+        stats = self_healer.stats()
+        metrics.update(
+            {
+                "failures_detected": stats.failures_detected,
+                "routes_removed": stats.routes_removed,
+                "route_recomputations": stats.recomputations,
+            }
+        )
+
+    return metrics
+
+
 def run_receiver(
     node: MeshNode,
     enable_discovery: bool = False,
@@ -136,6 +224,13 @@ def run_receiver(
     enable_file_receiver: bool = False,
     output_dir: str = DEFAULT_RECEIVED_FILES_DIR,
     enable_status_listener: bool = False,
+    location_service: LocationService | None = None,
+    enable_self_healing: bool = False,
+    self_heal_interval: float = DEFAULT_SELF_HEALING_INTERVAL_SECONDS,
+    enable_topology_print: bool = False,
+    enable_dashboard: bool = False,
+    dashboard_host: str = DEFAULT_DASHBOARD_HOST,
+    dashboard_port: int = DEFAULT_DASHBOARD_PORT,
     peers: list[tuple[str, int]] | None = None,
     discovery_interval: float = DEFAULT_DISCOVERY_INTERVAL_SECONDS,
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
@@ -152,15 +247,29 @@ def run_receiver(
 
     peers = peers or []
     neighbor_manager = NeighborManager(node.neighbors, self_node_id=node.node_id)
+    location_service = location_service or LocationService()
+    topology = (
+        NetworkTopology(self_node_id=node.node_id)
+        if routing_strategy == RoutingStrategy.LINK_STATE
+        or enable_self_healing
+        or enable_topology_print
+        or enable_dashboard
+        else None
+    )
     announced_neighbors: set[str] = set()
+    self_healer = None
 
     def handle_neighbor_discovered(neighbor) -> None:
         if neighbor.node_id in announced_neighbors:
             return
         announced_neighbors.add(neighbor.node_id)
+        if topology:
+            topology.add_link(node.node_id, neighbor.node_id, cost=1)
         print(f"Discovered neighbor: {neighbor.node_id} at {neighbor.ip}:{neighbor.port}")
 
     def handle_neighbor_lost(neighbor) -> None:
+        if self_healer:
+            self_healer.handle_neighbor_lost(neighbor)
         print(f"Neighbor offline: {neighbor.node_id}")
 
     node.start_networking()
@@ -180,6 +289,7 @@ def run_receiver(
     file_receiver = None
     gbn_receiver = None
     status_service = None
+    dashboard = None
 
     def handle_local_packet(packet: dict, address: tuple[str, int]) -> None:
         packet_type = packet.get("type")
@@ -193,6 +303,9 @@ def run_receiver(
             print_packet(packet, address)
 
     if enable_discovery:
+        if topology:
+            topology.sync_from_neighbors(node.neighbors)
+ 
         discovery_service = DiscoveryService(
             node,
             udp_socket=node.udp_socket,
@@ -218,10 +331,23 @@ def run_receiver(
             node,
             strategy=routing_strategy,
             udp_socket=node.udp_socket,
+            topology=topology,
             interval=routing_interval,
             on_route_change=lambda t: print(f"Routes updated: {len(t)} destinations"),
         )
         routing_manager.start()
+
+    if enable_self_healing:
+        self_healer = SelfHealingManager(
+            node,
+            neighbor_manager=neighbor_manager,
+            topology=topology,
+            routing_manager=routing_manager,
+            neighbor_timeout=neighbor_timeout,
+            check_interval=self_heal_interval,
+            on_recovery=print_recovery,
+        )
+        self_healer.start()
 
     if enable_file_receiver:
         file_receiver = FileTransferReceiver(output_dir=output_dir, on_complete=print_received_file)
@@ -233,7 +359,7 @@ def run_receiver(
         )
         gbn_receiver.start()
 
-    if enable_status_listener:
+    if enable_status_listener or enable_dashboard:
         status_service = StatusBroadcastService(
             node,
             udp_socket=node.udp_socket,
@@ -241,6 +367,25 @@ def run_receiver(
             on_status=print_status,
         )
         status_service.start()
+
+    if enable_dashboard:
+        dashboard = DashboardServer(
+            node,
+            host=dashboard_host,
+            port=dashboard_port,
+            neighbor_manager=neighbor_manager,
+            topology=topology,
+            status_service=status_service,
+            location_service=location_service,
+            metrics_provider=lambda: build_runtime_metrics(
+                neighbor_manager=neighbor_manager,
+                routing_manager=routing_manager,
+                forwarder=forwarder,
+                file_receiver=file_receiver,
+                self_healer=self_healer,
+            ),
+        )
+        dashboard.start(block=False)
 
     if enable_forwarding:
         forwarder = PacketForwarder(
@@ -268,6 +413,10 @@ def run_receiver(
         print(f"File receiver: ACTIVE ({output_dir})")
     if enable_status_listener:
         print("Status listener: ACTIVE")
+    if enable_self_healing:
+        print("Self-healing: ACTIVE")
+    if enable_dashboard and dashboard:
+        print(f"Dashboard: {dashboard.url}")
     print("Waiting for UDP packets. Press Ctrl+C to stop.")
 
     try:
@@ -290,6 +439,9 @@ def run_receiver(
                 if table:
                     print(routing_manager.format_routing_table())
 
+            if enable_topology_print:
+                print(TopologyVisualizer(node, topology=topology).to_ascii())
+
             if forwarder:
                 stats = forwarder.stats()
                 if stats.total_received > 0:
@@ -301,6 +453,10 @@ def run_receiver(
 
             last_neighbor_print = now
     finally:
+        if dashboard:
+            dashboard.stop()
+        if self_healer:
+            self_healer.stop()
         if forwarder:
             forwarder.stop()
         if status_service:
@@ -429,6 +585,7 @@ def run_status_sender(
     targets: list[tuple[str, int]],
     status: str = DEFAULT_STATUS_VALUE,
     message: str | None = None,
+    location_service: LocationService | None = None,
 ) -> int:
     if not targets:
         print("Status broadcast requires at least one --peer or --send-to target for local testing.", file=sys.stderr)
@@ -437,15 +594,89 @@ def run_status_sender(
     node.start_networking()
     service = StatusBroadcastService(node, udp_socket=node.udp_socket, targets=targets)
     try:
-        broadcast_id = service.broadcast_status(status=status, message=message)
+        location = location_service.current_payload() if location_service else None
+        broadcast_id = service.broadcast_status(status=status, message=message, location=location)
         target_text = ", ".join(f"{host}:{port}" for host, port in targets)
         print(f"Broadcast STATUS {status} from {node.node_id} to {target_text}")
+        if location:
+            print(f"Location: {location['latitude']}, {location['longitude']} ({location['label']})")
         print(f"Broadcast ID: {broadcast_id}")
         time.sleep(0.1)
         return 0
     finally:
         service.stop()
         node.stop_networking()
+
+
+def run_simulation_demo(
+    packets: int,
+    loss_rate: float,
+    delay: float,
+    jitter: float,
+    failed_nodes: list[str],
+) -> int:
+    if packets < 0:
+        print("--sim-packets must be non-negative", file=sys.stderr)
+        return 2
+
+    delivered_event = threading.Event()
+    delivered_packets = []
+
+    def on_packet(packet: dict, address: tuple[str, int]) -> None:
+        delivered_packets.append(packet)
+        if len(delivered_packets) >= packets:
+            delivered_event.set()
+
+    receiver = MeshNode(node_id="SIM_B", ip="127.0.0.1", port=0)
+    sender = MeshNode(node_id="SIM_A", ip="127.0.0.1", port=0)
+    receiver.start_networking(on_packet=on_packet)
+    sender.start_networking()
+
+    simulator = NetworkSimulator(
+        loss_rate=loss_rate,
+        base_delay_seconds=delay,
+        jitter_seconds=jitter,
+        random_seed=7,
+    )
+    for failed_node in failed_nodes:
+        simulator.fail_node(failed_node)
+
+    try:
+        for index in range(packets):
+            packet = create_packet(
+                packet_type=PacketType.MESSAGE,
+                source=sender.node_id,
+                destination=receiver.node_id,
+                sequence_number=index + 1,
+                payload=f"simulated packet {index + 1}",
+            )
+            simulator.send_packet(
+                sender.udp_socket,
+                packet,
+                receiver.udp_socket.local_address,
+                source_node=sender.node_id,
+                destination_node=receiver.node_id,
+            )
+
+        wait_time = max(1.0, delay + jitter + 0.5)
+        delivered_event.wait(wait_time)
+        simulator.wait_for_deliveries(timeout=wait_time)
+        stats = simulator.stats()
+
+        print("--- Network Simulator ---")
+        print(f"Packets attempted:  {stats.attempted}")
+        print(f"Packets delivered:  {stats.delivered}")
+        print(f"Packets delayed:    {stats.delayed}")
+        print(f"Dropped by loss:    {stats.dropped_loss}")
+        print(f"Dropped by failure: {stats.dropped_node_failure}")
+        print(f"Send errors:        {stats.send_errors}")
+        print(f"Delivery rate:      {stats.delivery_rate:.1%}")
+        if failed_nodes:
+            print(f"Failed nodes:       {', '.join(failed_nodes)}")
+        return 0
+    finally:
+        sender.stop_networking()
+        receiver.stop_networking()
 
 
 def run_gbn_sender(
@@ -537,6 +768,22 @@ def run_gbn_sender(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.sim_demo:
+        return run_simulation_demo(
+            packets=args.sim_packets,
+            loss_rate=args.loss_rate,
+            delay=args.delay,
+            jitter=args.jitter,
+            failed_nodes=args.fail_node,
+        )
+
+    try:
+        location_service = build_location_service(args.latitude, args.longitude, args.location_label)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     port = args.port
     if port is None:
         port = 0 if args.send_to or args.send_file or args.im_safe or args.status else DEFAULT_PORT
@@ -553,6 +800,7 @@ def main(argv: list[str] | None = None) -> int:
                 targets=targets,
                 status=DEFAULT_STATUS_VALUE if args.im_safe else args.status,
                 message=args.message,
+                location_service=location_service,
             )
 
         if args.send_file:
@@ -615,6 +863,13 @@ def main(argv: list[str] | None = None) -> int:
             enable_file_receiver=args.receive_files,
             output_dir=args.output_dir,
             enable_status_listener=args.status_listen,
+            location_service=location_service,
+            enable_self_healing=args.self_heal,
+            self_heal_interval=args.self_heal_interval,
+            enable_topology_print=args.print_topology,
+            enable_dashboard=args.dashboard,
+            dashboard_host=args.dashboard_host,
+            dashboard_port=args.dashboard_port,
             peers=args.peer,
             discovery_interval=args.discovery_interval,
             heartbeat_interval=args.heartbeat_interval,

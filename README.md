@@ -1,6 +1,6 @@
 # MeshLink
 
-MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-20 from the implementation plan:
+MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-25 from the implementation plan:
 
 - Module 1: node management
 - Module 2: packet design, serialization, and checksums
@@ -22,6 +22,11 @@ MeshLink is an academic offline mesh communication prototype. This repository cu
 - Module 18: messaging application service
 - Module 19: file transfer with metadata, chunking, reassembly, and integrity check
 - Module 20: emergency status broadcast with duplicate suppression
+- Module 21: manual/simulated location service
+- Module 22: packet loss, latency, and node failure simulator
+- Module 23: resilience and self-healing route cleanup
+- Module 24: live topology visualization data, ASCII, and SVG output
+- Module 25: web dashboard with live state APIs
 
 ## Setup
 
@@ -33,7 +38,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Modules 1-20 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
+Modules 1-25 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
 
 ## Run Tests
 
@@ -346,19 +351,106 @@ Expected receiver output:
 Status from DEVICE_A: SAFE - All clear
 ```
 
+## Try Location Service (Module 21)
+
+Attach manual/simulated coordinates to a status broadcast:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --peer 127.0.0.1:5002 --im-safe --message "All clear" --latitude 12.9716 --longitude 77.5946 --location-label Bengaluru
+```
+
+Expected sender output includes:
+
+```text
+Location: 12.9716, 77.5946 (Bengaluru)
+```
+
+## Try Network Simulator (Module 22)
+
+Run a standalone simulation with packet loss and delay:
+
+```powershell
+python main.py --sim-demo --sim-packets 10 --loss-rate 0.3 --delay 0.1 --jitter 0.05
+```
+
+Expected output:
+
+```text
+--- Network Simulator ---
+Packets attempted:  10
+Packets delivered:  ...
+Dropped by loss:    ...
+Delivery rate:      ...
+```
+
+Simulate a failed destination:
+
+```powershell
+python main.py --sim-demo --sim-packets 5 --fail-node SIM_B
+```
+
+Expected output includes:
+
+```text
+Dropped by failure: 5
+```
+
+## Try Self-Healing and Topology View (Modules 23-24)
+
+Run nodes with discovery, routing, self-healing, and periodic topology output:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --self-heal --print-topology --peer 127.0.0.1:5002 --neighbor-timeout 5
+```
+
+In another terminal:
+
+```powershell
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --link-state --self-heal --peer 127.0.0.1:5003 --neighbor-timeout 5
+```
+
+Stop `DEVICE_B`. After the timeout, `DEVICE_A` prints:
+
+```text
+Neighbor offline: DEVICE_B
+Self-healing: removed failed node DEVICE_B; purged routes: ...
+```
+
+The topology output lists nodes, links, and routes.
+
+## Try Web Dashboard (Module 25)
+
+Start a node with dashboard enabled:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --self-heal --status-listen --dashboard --dashboard-port 8080 --peer 127.0.0.1:5002
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080
+```
+
+The dashboard shows node status, nearby devices, routes, topology, transfer statistics, and received status broadcasts.
+
 ## Project Layout
 
 ```text
 config/
 core/
 application/
+dashboard/
 discovery/
 relay/
+resilience/
 routing/
+simulator/
 transport/
+visualization/
 tests/
 main.py
 requirements.txt
 ```
 
-Later modules can extend this structure with location services, simulation, dashboard, and visualization packages.
+The project is now implemented through Module 25.

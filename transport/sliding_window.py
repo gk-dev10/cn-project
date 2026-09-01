@@ -439,12 +439,14 @@ class SlidingWindowReceiver:
         if not isinstance(seq, int):
             return
 
+        in_order = False
         with self._lock:
             if seq == self._expected_seq:
                 # In-order — deliver.
                 self._expected_seq += 1
                 self._last_ack_seq = seq
                 self._delivered += 1
+                in_order = True
             else:
                 # Out of order — discard, re-ACK last good sequence.
                 self._out_of_order += 1
@@ -455,7 +457,7 @@ class SlidingWindowReceiver:
         self._send_ack(ack_seq, packet, address)
 
         # Deliver outside the lock.
-        if seq == ack_seq:
+        if in_order:
             if self.on_deliver:
                 self.on_deliver(seq, packet, address)
 

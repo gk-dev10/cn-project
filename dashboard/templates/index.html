@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MeshLink Dashboard</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>MeshLink</h1>
+        <p id="nodeLine">Node loading</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="refreshBtn" type="button" title="Refresh">Refresh</button>
+        <button id="safeBtn" type="button" title="Broadcast safe status">I'm Safe</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel topology-panel" aria-labelledby="topologyTitle">
+        <div class="panel-header">
+          <h2 id="topologyTitle">Topology</h2>
+          <span id="networkStatus" class="status-pill">Loading</span>
+        </div>
+        <svg id="topologySvg" viewBox="0 0 720 420" role="img" aria-label="Mesh topology"></svg>
+      </section>
+
+      <section class="panel" aria-labelledby="neighborsTitle">
+        <div class="panel-header">
+          <h2 id="neighborsTitle">Nearby Devices</h2>
+          <span id="neighborCount">0</span>
+        </div>
+        <div id="neighbors" class="list"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="routesTitle">
+        <div class="panel-header">
+          <h2 id="routesTitle">Routes</h2>
+          <span id="routeCount">0</span>
+        </div>
+        <div id="routes" class="list"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="metricsTitle">
+        <div class="panel-header">
+          <h2 id="metricsTitle">Transfer Statistics</h2>
+          <span id="updatedAt">--</span>
+        </div>
+        <div id="metrics" class="metrics-grid"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="statusTitle">
+        <div class="panel-header">
+          <h2 id="statusTitle">Status Broadcasts</h2>
+          <span id="statusCount">0</span>
+        </div>
+        <div id="statuses" class="list"></div>
+      </section>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>
+

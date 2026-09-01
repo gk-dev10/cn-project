@@ -158,6 +158,15 @@ class RoutingManager:
                 return "(routing not started)"
             return self._service.format_routing_table()
 
+    def refresh_routes(self) -> None:
+        """Ask the active routing service to publish/recompute routes now."""
+        with self._lock:
+            if self._service is None:
+                return
+            announce = getattr(self._service, "announce", None)
+            if callable(announce):
+                announce()
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
