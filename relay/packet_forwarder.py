@@ -117,6 +117,8 @@ class PacketForwarder:
         self.forwardable_types = forwardable_types or {
             PacketType.MESSAGE.value,
             PacketType.FILE_CHUNK.value,
+            PacketType.STATUS.value,
+            PacketType.ACK.value,
         }
 
         self._stats = ForwarderStats()

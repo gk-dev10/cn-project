@@ -7,25 +7,29 @@ import threading
 import time
 from typing import Tuple
 
+from application.file_transfer import FileTransferReceiver, FileTransferSender
+from application.messaging import MessagingService
+from application.status_broadcast import StatusBroadcastService
 from core.constants import (
     DEFAULT_DISCOVERY_INTERVAL_SECONDS,
+    DEFAULT_FILE_CHUNK_SIZE,
     DEFAULT_GBN_ACK_TIMEOUT_SECONDS,
     DEFAULT_GBN_WINDOW_SIZE,
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
     DEFAULT_PORT,
+    DEFAULT_RECEIVED_FILES_DIR,
     DEFAULT_RELIABLE_ACK_TIMEOUT_SECONDS,
     DEFAULT_RELIABLE_MAX_RETRIES,
+    DEFAULT_STATUS_VALUE,
     PacketType,
 )
 from core.node import MeshNode
-from core.packet import create_packet
 from discovery.discovery_service import DiscoveryService
 from discovery.heartbeat_service import HeartbeatService
 from discovery.neighbor_manager import NeighborManager
 from relay.packet_forwarder import PacketForwarder
 from routing.routing_manager import RoutingManager, RoutingStrategy
-from routing.topology import NetworkTopology
 from transport.adaptive_window import AdaptiveWindowController
 from transport.checksum_tracker import ChecksumTracker
 from transport.reliable_transport import ReliableTransport
@@ -52,7 +56,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-17.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-20.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -92,6 +96,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lsa-interval", type=float, default=5.0, help="(deprecated, use --routing-interval)")
     # Module 16 — Multi-hop forwarding.
     parser.add_argument("--forward", action="store_true", help="Enable multi-hop packet forwarding (relay)")
+    parser.add_argument("--send-file", help="Path to a file to send using Go-Back-N file transfer")
+    parser.add_argument("--receive-files", action="store_true", help="Receive FILE_CHUNK packets and reassemble files")
+    parser.add_argument("--output-dir", default=DEFAULT_RECEIVED_FILES_DIR, help="Directory for received files")
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_FILE_CHUNK_SIZE, help="File chunk size in bytes")
+    parser.add_argument("--im-safe", action="store_true", help="Broadcast an emergency SAFE status")
+    parser.add_argument("--status", help="Broadcast a custom status value, for example SAFE or NEED_HELP")
+    parser.add_argument("--status-listen", action="store_true", help="Listen for and relay STATUS broadcasts")
     return parser
 
 
@@ -101,11 +112,30 @@ def print_packet(packet: dict, address: tuple[str, int]) -> None:
     print(f"Payload: {packet['payload']}")
 
 
+def print_message(message) -> None:
+    print(f"Message from {message.source}: {message.text}")
+
+
+def print_received_file(received_file) -> None:
+    print(
+        f"Received file {received_file.file_name} "
+        f"({received_file.file_size} bytes) -> {received_file.path}"
+    )
+
+
+def print_status(status_message) -> None:
+    suffix = f" - {status_message.message}" if status_message.message else ""
+    print(f"Status from {status_message.source}: {status_message.status}{suffix}")
+
+
 def run_receiver(
     node: MeshNode,
     enable_discovery: bool = False,
     routing_strategy: RoutingStrategy | None = None,
     enable_forwarding: bool = False,
+    enable_file_receiver: bool = False,
+    output_dir: str = DEFAULT_RECEIVED_FILES_DIR,
+    enable_status_listener: bool = False,
     peers: list[tuple[str, int]] | None = None,
     discovery_interval: float = DEFAULT_DISCOVERY_INTERVAL_SECONDS,
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
@@ -134,13 +164,33 @@ def run_receiver(
         print(f"Neighbor offline: {neighbor.node_id}")
 
     node.start_networking()
-    reliable_transport = ReliableTransport(node, udp_socket=node.udp_socket, on_packet=print_packet)
+    messaging_service = MessagingService(node, udp_socket=node.udp_socket, on_message=print_message)
+    reliable_transport = ReliableTransport(
+        node,
+        udp_socket=node.udp_socket,
+        on_packet=messaging_service.handle_packet,
+        packet_types={PacketType.MESSAGE.value},
+    )
     reliable_transport.start()
 
     discovery_service = None
     heartbeat_service = None
     routing_manager = None
     forwarder = None
+    file_receiver = None
+    gbn_receiver = None
+    status_service = None
+
+    def handle_local_packet(packet: dict, address: tuple[str, int]) -> None:
+        packet_type = packet.get("type")
+        if packet_type == PacketType.MESSAGE.value:
+            messaging_service.handle_packet(packet, address)
+        elif packet_type == PacketType.FILE_CHUNK.value and file_receiver:
+            return
+        elif packet_type == PacketType.STATUS.value and status_service:
+            status_service.handle_packet(packet, address)
+        else:
+            print_packet(packet, address)
 
     if enable_discovery:
         discovery_service = DiscoveryService(
@@ -173,11 +223,30 @@ def run_receiver(
         )
         routing_manager.start()
 
+    if enable_file_receiver:
+        file_receiver = FileTransferReceiver(output_dir=output_dir, on_complete=print_received_file)
+        gbn_receiver = SlidingWindowReceiver(
+            node,
+            node.udp_socket,
+            on_deliver=file_receiver.handle_window_delivery,
+            expected_types={PacketType.FILE_CHUNK.value},
+        )
+        gbn_receiver.start()
+
+    if enable_status_listener:
+        status_service = StatusBroadcastService(
+            node,
+            udp_socket=node.udp_socket,
+            targets=peers,
+            on_status=print_status,
+        )
+        status_service.start()
+
     if enable_forwarding:
         forwarder = PacketForwarder(
             node,
             udp_socket=node.udp_socket,
-            on_local_deliver=print_packet,
+            on_local_deliver=handle_local_packet,
             on_drop=lambda pkt, reason, addr: print(f"Dropped packet from {pkt.get('source')}: {reason}"),
             on_forward=lambda pkt, hop, addr: print(
                 f"Forwarded packet from {pkt.get('source')} to {pkt.get('destination')} via {hop}"
@@ -195,6 +264,10 @@ def run_receiver(
         print(f"Routing: {routing_strategy.value}")
     if enable_forwarding:
         print("Forwarding: ACTIVE")
+    if enable_file_receiver:
+        print(f"File receiver: ACTIVE ({output_dir})")
+    if enable_status_listener:
+        print("Status listener: ACTIVE")
     print("Waiting for UDP packets. Press Ctrl+C to stop.")
 
     try:
@@ -230,6 +303,10 @@ def run_receiver(
     finally:
         if forwarder:
             forwarder.stop()
+        if status_service:
+            status_service.stop()
+        if gbn_receiver:
+            gbn_receiver.stop()
         if routing_manager:
             routing_manager.stop()
         if heartbeat_service:
@@ -254,6 +331,7 @@ def run_sender(
     node.start_networking()
     local_host, local_port = node.udp_socket.local_address
     reliable_transport = None
+    messaging_service = MessagingService(node, udp_socket=node.udp_socket)
 
     try:
         if reliable:
@@ -262,13 +340,15 @@ def run_sender(
                 udp_socket=node.udp_socket,
                 ack_timeout=ack_timeout,
                 max_retries=max_retries,
+                packet_types={PacketType.MESSAGE.value},
             )
             reliable_transport.start()
-            result = reliable_transport.send_message(
+            messaging_service.reliable_transport = reliable_transport
+            result = messaging_service.send_message(
                 destination=destination,
                 address=destination_endpoint,
-                message=message,
-                wait_for_ack=True,
+                text=message,
+                reliable=True,
             )
             if result.acknowledged:
                 print(
@@ -285,22 +365,86 @@ def run_sender(
             )
             return 1
 
-        packet = create_packet(
-            packet_type=PacketType.MESSAGE,
-            source=node.node_id,
+        result = messaging_service.send_message(
             destination=destination,
-            sequence_number=1,
-            payload=message,
+            address=destination_endpoint,
+            text=message,
+            reliable=False,
         )
-        node.udp_socket.send_packet(packet, destination_endpoint)
         print(
-            f"Sent MESSAGE packet #1 from {node.node_id} "
+            f"Sent MESSAGE packet #{result.sequence_number} from {node.node_id} "
             f"on {local_host}:{local_port} to {destination_endpoint[0]}:{destination_endpoint[1]}"
         )
         return 0
     finally:
         if reliable_transport:
             reliable_transport.stop()
+        messaging_service.stop()
+        node.stop_networking()
+
+
+def run_file_sender(
+    node: MeshNode,
+    destination_endpoint: tuple[str, int],
+    destination: str,
+    file_path: str,
+    window_size: int = DEFAULT_GBN_WINDOW_SIZE,
+    ack_timeout: float = DEFAULT_GBN_ACK_TIMEOUT_SECONDS,
+    chunk_size: int = DEFAULT_FILE_CHUNK_SIZE,
+) -> int:
+    node.start_networking()
+    local_host, local_port = node.udp_socket.local_address
+    sender = FileTransferSender(
+        node,
+        udp_socket=node.udp_socket,
+        window_size=window_size,
+        ack_timeout=ack_timeout,
+    )
+
+    try:
+        result = sender.send_file(
+            destination=destination,
+            address=destination_endpoint,
+            file_path=file_path,
+            chunk_size=chunk_size,
+        )
+
+        print(
+            f"Sent file {result.file_name} ({result.file_size} bytes) from {node.node_id} "
+            f"on {local_host}:{local_port} to {destination_endpoint[0]}:{destination_endpoint[1]}"
+        )
+        print(f"Transfer ID:      {result.transfer_id}")
+        print(f"Chunks:           {result.total_chunks}")
+        print(f"Packets sent:     {result.packets_sent}")
+        print(f"Packets ACKed:    {result.packets_acked}")
+        print(f"Retransmissions:  {result.retransmissions}")
+        print(f"Success:          {result.success}")
+        return 0 if result.success else 1
+    finally:
+        node.stop_networking()
+
+
+def run_status_sender(
+    node: MeshNode,
+    targets: list[tuple[str, int]],
+    status: str = DEFAULT_STATUS_VALUE,
+    message: str | None = None,
+) -> int:
+    if not targets:
+        print("Status broadcast requires at least one --peer or --send-to target for local testing.", file=sys.stderr)
+        return 2
+
+    node.start_networking()
+    service = StatusBroadcastService(node, udp_socket=node.udp_socket, targets=targets)
+    try:
+        broadcast_id = service.broadcast_status(status=status, message=message)
+        target_text = ", ".join(f"{host}:{port}" for host, port in targets)
+        print(f"Broadcast STATUS {status} from {node.node_id} to {target_text}")
+        print(f"Broadcast ID: {broadcast_id}")
+        time.sleep(0.1)
+        return 0
+    finally:
+        service.stop()
         node.stop_networking()
 
 
@@ -395,11 +539,36 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     port = args.port
     if port is None:
-        port = 0 if args.send_to else DEFAULT_PORT
+        port = 0 if args.send_to or args.send_file or args.im_safe or args.status else DEFAULT_PORT
 
     node = MeshNode(node_id=args.node_id, ip=args.host, port=port)
 
     try:
+        if args.im_safe or args.status:
+            targets = list(args.peer)
+            if args.send_to:
+                targets.append(args.send_to)
+            return run_status_sender(
+                node,
+                targets=targets,
+                status=DEFAULT_STATUS_VALUE if args.im_safe else args.status,
+                message=args.message,
+            )
+
+        if args.send_file:
+            if not args.send_to:
+                print("--send-file requires --send-to", file=sys.stderr)
+                return 2
+            return run_file_sender(
+                node,
+                args.send_to,
+                args.destination,
+                args.send_file,
+                window_size=args.window_size,
+                ack_timeout=args.gbn_timeout,
+                chunk_size=args.chunk_size,
+            )
+
         if args.send_to:
             if not args.message:
                 print("--message is required when --send-to is provided", file=sys.stderr)
@@ -443,6 +612,9 @@ def main(argv: list[str] | None = None) -> int:
             enable_discovery=args.discover,
             routing_strategy=routing_strategy,
             enable_forwarding=args.forward,
+            enable_file_receiver=args.receive_files,
+            output_dir=args.output_dir,
+            enable_status_listener=args.status_listen,
             peers=args.peer,
             discovery_interval=args.discovery_interval,
             heartbeat_interval=args.heartbeat_interval,

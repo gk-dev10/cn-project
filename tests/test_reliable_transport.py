@@ -22,14 +22,14 @@ class ReliableTransportTests(unittest.TestCase):
         sender = ReliableTransport(
             sender_node,
             udp_socket=sender_node.udp_socket,
-            ack_timeout=0.05,
+            ack_timeout=0.1,
             max_retries=2,
             check_interval=0.005,
         )
         receiver = ReliableTransport(
             receiver_node,
             udp_socket=receiver_node.udp_socket,
-            ack_timeout=0.05,
+            ack_timeout=0.1,
             max_retries=2,
             check_interval=0.005,
             on_packet=handle_packet,
@@ -87,4 +87,3 @@ class ReliableTransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

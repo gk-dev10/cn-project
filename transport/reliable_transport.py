@@ -58,6 +58,7 @@ class ReliableTransport:
         check_interval: float = DEFAULT_RETRANSMISSION_CHECK_INTERVAL_SECONDS,
         on_packet: Optional[ReliablePacketHandler] = None,
         on_delivery_failed: Optional[DeliveryFailureHandler] = None,
+        packet_types: Optional[set[str]] = None,
     ):
         if max_retries < 0:
             raise ValueError("max_retries must be non-negative")
@@ -69,6 +70,7 @@ class ReliableTransport:
         self.check_interval = check_interval
         self.on_packet = on_packet
         self.on_delivery_failed = on_delivery_failed
+        self.packet_types = set(packet_types or RELIABLE_PACKET_TYPES)
         self.pending_packets: dict[int, PendingPacket] = {}
         self.received_sequences: set[tuple[str, int]] = set()
         self._sequence_numbers = itertools.count(1)
@@ -170,7 +172,7 @@ class ReliableTransport:
             self._handle_ack(packet)
             return
 
-        if packet_type not in RELIABLE_PACKET_TYPES:
+        if packet_type not in self.packet_types:
             return
 
         if not self._is_for_this_node(packet):
@@ -281,4 +283,3 @@ class ReliableTransport:
     def _is_for_this_node(self, packet: dict) -> bool:
         destination = packet.get("destination")
         return destination in {None, self.node.node_id}
-
