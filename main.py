@@ -23,7 +23,8 @@ from core.packet import create_packet
 from discovery.discovery_service import DiscoveryService
 from discovery.heartbeat_service import HeartbeatService
 from discovery.neighbor_manager import NeighborManager
-from routing.link_state import LinkStateService
+from relay.packet_forwarder import PacketForwarder
+from routing.routing_manager import RoutingManager, RoutingStrategy
 from routing.topology import NetworkTopology
 from transport.adaptive_window import AdaptiveWindowController
 from transport.checksum_tracker import ChecksumTracker
@@ -51,7 +52,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-12.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-17.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -84,9 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunks", type=int, default=5, help="Number of chunks to split the message into for GBN demo")
     # Module 9 — Adaptive window control.
     parser.add_argument("--adaptive", action="store_true", help="Enable adaptive window control (auto-tune window size)")
-    # Module 11 — Link-State routing.
+    # Modules 11/13/15 — Routing (unified via RoutingManager).
     parser.add_argument("--link-state", action="store_true", help="Enable Link-State routing with Dijkstra")
-    parser.add_argument("--lsa-interval", type=float, default=5.0, help="Seconds between Link-State Advertisements")
+    parser.add_argument("--distance-vector", action="store_true", help="Enable Distance-Vector routing with Bellman-Ford")
+    parser.add_argument("--routing-interval", type=float, default=5.0, help="Seconds between routing announcements")
+    parser.add_argument("--lsa-interval", type=float, default=5.0, help="(deprecated, use --routing-interval)")
+    # Module 16 — Multi-hop forwarding.
+    parser.add_argument("--forward", action="store_true", help="Enable multi-hop packet forwarding (relay)")
     return parser
 
 
@@ -99,12 +104,13 @@ def print_packet(packet: dict, address: tuple[str, int]) -> None:
 def run_receiver(
     node: MeshNode,
     enable_discovery: bool = False,
-    enable_link_state: bool = False,
+    routing_strategy: RoutingStrategy | None = None,
+    enable_forwarding: bool = False,
     peers: list[tuple[str, int]] | None = None,
     discovery_interval: float = DEFAULT_DISCOVERY_INTERVAL_SECONDS,
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     neighbor_timeout: float = DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
-    lsa_interval: float = 5.0,
+    routing_interval: float = 5.0,
 ) -> int:
     stopped = threading.Event()
 
@@ -133,8 +139,8 @@ def run_receiver(
 
     discovery_service = None
     heartbeat_service = None
-    link_state_service = None
-    topology = None
+    routing_manager = None
+    forwarder = None
 
     if enable_discovery:
         discovery_service = DiscoveryService(
@@ -157,16 +163,27 @@ def run_receiver(
         discovery_service.start()
         heartbeat_service.start()
 
-    if enable_link_state:
-        topology = NetworkTopology(self_node_id=node.node_id)
-        link_state_service = LinkStateService(
+    if routing_strategy is not None:
+        routing_manager = RoutingManager(
             node,
-            topology,
+            strategy=routing_strategy,
             udp_socket=node.udp_socket,
-            interval=lsa_interval,
+            interval=routing_interval,
             on_route_change=lambda t: print(f"Routes updated: {len(t)} destinations"),
         )
-        link_state_service.start()
+        routing_manager.start()
+
+    if enable_forwarding:
+        forwarder = PacketForwarder(
+            node,
+            udp_socket=node.udp_socket,
+            on_local_deliver=print_packet,
+            on_drop=lambda pkt, reason, addr: print(f"Dropped packet from {pkt.get('source')}: {reason}"),
+            on_forward=lambda pkt, hop, addr: print(
+                f"Forwarded packet from {pkt.get('source')} to {pkt.get('destination')} via {hop}"
+            ),
+        )
+        forwarder.start()
 
     print("Node created:")
     print(f"Node ID: {node.node_id}")
@@ -174,8 +191,10 @@ def run_receiver(
     print(f"Status: {node.status}")
     if enable_discovery:
         print("Discovery: ACTIVE")
-    if enable_link_state:
-        print("Link-State Routing: ACTIVE")
+    if routing_strategy is not None:
+        print(f"Routing: {routing_strategy.value}")
+    if enable_forwarding:
+        print("Forwarding: ACTIVE")
     print("Waiting for UDP packets. Press Ctrl+C to stop.")
 
     try:
@@ -193,15 +212,26 @@ def run_receiver(
                     )
                     print(f"Active neighbors: {joined}")
 
-            if enable_link_state and link_state_service:
-                table = link_state_service.current_routing_table()
+            if routing_manager:
+                table = routing_manager.current_routing_table()
                 if table:
-                    print(link_state_service.format_routing_table())
+                    print(routing_manager.format_routing_table())
+
+            if forwarder:
+                stats = forwarder.stats()
+                if stats.total_received > 0:
+                    print(
+                        f"Forwarder: delivered={stats.delivered_locally} "
+                        f"forwarded={stats.forwarded} "
+                        f"dropped(ttl={stats.dropped_ttl}, no_route={stats.dropped_no_route})"
+                    )
 
             last_neighbor_print = now
     finally:
-        if link_state_service:
-            link_state_service.stop()
+        if forwarder:
+            forwarder.stop()
+        if routing_manager:
+            routing_manager.stop()
         if heartbeat_service:
             heartbeat_service.stop()
         if discovery_service:
@@ -397,15 +427,27 @@ def main(argv: list[str] | None = None) -> int:
                 max_retries=args.max_retries,
             )
 
+        # Determine routing strategy.
+        routing_strategy = None
+        if args.link_state:
+            routing_strategy = RoutingStrategy.LINK_STATE
+        elif args.distance_vector:
+            routing_strategy = RoutingStrategy.DISTANCE_VECTOR
+
+        routing_interval = args.routing_interval
+        if args.lsa_interval != 5.0 and args.routing_interval == 5.0:
+            routing_interval = args.lsa_interval  # backward compat
+
         return run_receiver(
             node,
             enable_discovery=args.discover,
-            enable_link_state=args.link_state,
+            routing_strategy=routing_strategy,
+            enable_forwarding=args.forward,
             peers=args.peer,
             discovery_interval=args.discovery_interval,
             heartbeat_interval=args.heartbeat_interval,
             neighbor_timeout=args.neighbor_timeout,
-            lsa_interval=args.lsa_interval,
+            routing_interval=routing_interval,
         )
     except PermissionError as exc:
         print(f"Could not bind UDP socket on {node.ip}:{node.port}: {exc}", file=sys.stderr)

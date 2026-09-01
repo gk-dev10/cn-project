@@ -1,6 +1,6 @@
 # MeshLink
 
-MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-12 from the implementation plan:
+MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-17 from the implementation plan:
 
 - Module 1: node management
 - Module 2: packet design, serialization, and checksums
@@ -14,6 +14,11 @@ MeshLink is an academic offline mesh communication prototype. This repository cu
 - Module 10: network topology management (weighted graph)
 - Module 11: Link-State routing with LSA flooding
 - Module 12: Dijkstra's shortest-path algorithm
+- Module 13: Distance-Vector routing with periodic updates
+- Module 14: Bellman-Ford route computation
+- Module 15: Routing Manager (unified interface for LS / DV)
+- Module 16: multi-hop packet forwarding (relay)
+- Module 17: TTL management (integrated into forwarder)
 
 ## Setup
 
@@ -25,7 +30,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Modules 1-12 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
+Modules 1-17 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
 
 ## Run Tests
 
@@ -198,12 +203,72 @@ DEVICE_B        DEVICE_B             1
 
 For a 3-node chain (A -- B -- C), start a third terminal and both A and C will discover a 2-hop route to each other through B.
 
+## Try Distance-Vector Routing (Modules 13-14)
+
+Use `--distance-vector` instead of `--link-state` to use the Bellman-Ford algorithm:
+
+Terminal 1:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --distance-vector --peer 127.0.0.1:5002 --routing-interval 3
+```
+
+Terminal 2:
+
+```powershell
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --distance-vector --peer 127.0.0.1:5003 --routing-interval 3
+```
+
+The `--routing-interval` flag controls how often distance vectors are sent.
+
+## Try Multi-Hop Forwarding (Modules 16-17)
+
+Add `--forward` to enable relay mode. In a 3-node chain (A -- B -- C), node B can forward packets from A to C:
+
+Terminal 1 (Node A):
+
+```powershell
+python main.py --node-id A --host 127.0.0.1 --port 5001 --discover --link-state --forward --peer 127.0.0.1:5002
+```
+
+Terminal 2 (Node B — relay):
+
+```powershell
+python main.py --node-id B --host 127.0.0.1 --port 5002 --discover --link-state --forward --peer 127.0.0.1:5001 --peer 127.0.0.1:5003
+```
+
+Terminal 3 (Node C):
+
+```powershell
+python main.py --node-id C --host 127.0.0.1 --port 5003 --discover --link-state --forward --peer 127.0.0.1:5002
+```
+
+Now send from A to C (which goes through B):
+
+```powershell
+python main.py --node-id A --host 127.0.0.1 --send-to 127.0.0.1:5001 --destination C --message "Hello C via relay"
+```
+
+Node B will print:
+
+```text
+Forwarded packet from A to C via C
+```
+
+Node C will print:
+
+```text
+Received MESSAGE from A ...
+Payload: Hello C via relay
+```
+
 ## Project Layout
 
 ```text
 config/
 core/
 discovery/
+relay/
 routing/
 transport/
 tests/
@@ -211,4 +276,4 @@ main.py
 requirements.txt
 ```
 
-Later modules can extend this structure with relay, application, simulator, dashboard, and visualization packages.
+Later modules can extend this structure with application, simulator, dashboard, and visualization packages.
