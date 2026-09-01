@@ -9,6 +9,8 @@ from typing import Tuple
 
 from core.constants import (
     DEFAULT_DISCOVERY_INTERVAL_SECONDS,
+    DEFAULT_GBN_ACK_TIMEOUT_SECONDS,
+    DEFAULT_GBN_WINDOW_SIZE,
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
     DEFAULT_PORT,
@@ -21,7 +23,10 @@ from core.packet import create_packet
 from discovery.discovery_service import DiscoveryService
 from discovery.heartbeat_service import HeartbeatService
 from discovery.neighbor_manager import NeighborManager
+from transport.adaptive_window import AdaptiveWindowController
+from transport.checksum_tracker import ChecksumTracker
 from transport.reliable_transport import ReliableTransport
+from transport.sliding_window import SlidingWindowReceiver, SlidingWindowSender
 
 
 def parse_endpoint(value: str) -> Tuple[str, int]:
@@ -44,7 +49,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-6.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-9.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -70,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--discovery-interval", type=float, default=DEFAULT_DISCOVERY_INTERVAL_SECONDS)
     parser.add_argument("--heartbeat-interval", type=float, default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS)
     parser.add_argument("--neighbor-timeout", type=float, default=DEFAULT_NEIGHBOR_TIMEOUT_SECONDS)
+    # Module 8 — Go-Back-N sliding window.
+    parser.add_argument("--gbn", action="store_true", help="Send using Go-Back-N sliding window protocol")
+    parser.add_argument("--window-size", type=int, default=DEFAULT_GBN_WINDOW_SIZE, help="GBN window size")
+    parser.add_argument("--gbn-timeout", type=float, default=DEFAULT_GBN_ACK_TIMEOUT_SECONDS, help="GBN ACK timeout")
+    parser.add_argument("--chunks", type=int, default=5, help="Number of chunks to split the message into for GBN demo")
+    # Module 9 — Adaptive window control.
+    parser.add_argument("--adaptive", action="store_true", help="Enable adaptive window control (auto-tune window size)")
     return parser
 
 
@@ -233,6 +245,93 @@ def run_sender(
         node.stop_networking()
 
 
+def run_gbn_sender(
+    node: MeshNode,
+    destination_endpoint: tuple[str, int],
+    destination: str,
+    message: str,
+    window_size: int = DEFAULT_GBN_WINDOW_SIZE,
+    gbn_timeout: float = DEFAULT_GBN_ACK_TIMEOUT_SECONDS,
+    chunks: int = 5,
+    adaptive: bool = False,
+) -> int:
+    """Send a message split into chunks using Go-Back-N sliding window."""
+    node.start_networking()
+    local_host, local_port = node.udp_socket.local_address
+
+    tracker = ChecksumTracker()
+    sender = SlidingWindowSender(
+        node,
+        node.udp_socket,
+        window_size=window_size,
+        ack_timeout=gbn_timeout,
+        check_interval=0.02,
+    )
+    controller = None
+
+    try:
+        sender.start()
+
+        if adaptive:
+            controller = AdaptiveWindowController(sender, tracker)
+            controller.start()
+            print(f"Adaptive window control: ENABLED (initial window={window_size})")
+
+        # Split message into chunks.
+        chunk_size = max(1, len(message) // chunks)
+        payloads = []
+        for i in range(0, len(message), chunk_size):
+            payloads.append(message[i : i + chunk_size])
+        if not payloads:
+            payloads = [message]
+
+        print(
+            f"Sending {len(payloads)} chunks via Go-Back-N (window={window_size}) "
+            f"from {node.node_id} on {local_host}:{local_port} "
+            f"to {destination_endpoint[0]}:{destination_endpoint[1]}"
+        )
+
+        seqs = sender.send_all(
+            destination=destination,
+            address=destination_endpoint,
+            payloads=payloads,
+            packet_type=PacketType.MESSAGE,
+        )
+
+        success = sender.wait_all_acked(timeout=30)
+        stats = sender.stats()
+
+        print(f"\n--- Go-Back-N Transfer Summary ---")
+        print(f"Chunks sent:       {stats.packets_sent}")
+        print(f"Chunks ACKed:      {stats.packets_acked}")
+        print(f"Retransmissions:   {stats.retransmissions}")
+        print(f"Timeouts:          {stats.timeouts}")
+        print(f"Final window size: {stats.window_size}")
+        print(f"Loss rate:         {stats.loss_rate:.1%}")
+
+        if adaptive and controller:
+            snap = controller.current_snapshot()
+            if snap:
+                print(f"\n--- Adaptive Window Controller ---")
+                print(f"Last decision:     {snap.decision}")
+                print(f"SRTT:              {snap.srtt:.4f}s")
+                print(f"RTO:               {snap.rto:.4f}s")
+                print(f"Corruption rate:   {snap.corruption_rate:.1%}")
+
+        if success:
+            print(f"\nAll {len(payloads)} chunks delivered successfully.")
+            return 0
+        else:
+            print(f"\nSome chunks were not acknowledged.", file=sys.stderr)
+            return 1
+
+    finally:
+        if controller:
+            controller.stop()
+        sender.stop()
+        node.stop_networking()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     port = args.port
@@ -246,6 +345,19 @@ def main(argv: list[str] | None = None) -> int:
             if not args.message:
                 print("--message is required when --send-to is provided", file=sys.stderr)
                 return 2
+
+            if args.gbn:
+                return run_gbn_sender(
+                    node,
+                    args.send_to,
+                    args.destination,
+                    args.message,
+                    window_size=args.window_size,
+                    gbn_timeout=args.gbn_timeout,
+                    chunks=args.chunks,
+                    adaptive=args.adaptive,
+                )
+
             return run_sender(
                 node,
                 args.send_to,

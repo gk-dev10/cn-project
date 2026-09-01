@@ -1,6 +1,6 @@
 # MeshLink
 
-MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-6 from the implementation plan:
+MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-9 from the implementation plan:
 
 - Module 1: node management
 - Module 2: packet design, serialization, and checksums
@@ -8,6 +8,9 @@ MeshLink is an academic offline mesh communication prototype. This repository cu
 - Module 4: peer discovery and neighbor tracking
 - Module 5: heartbeat and failure detection
 - Module 6: ACK-based reliable UDP transport with retransmission
+- Module 7: checksum-based error detection with corruption statistics
+- Module 8: Go-Back-N sliding window protocol
+- Module 9: adaptive window control (AIMD + RTT-based timeout)
 
 ## Setup
 
@@ -19,7 +22,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Modules 1-6 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
+Modules 1-9 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
 
 ## Run Tests
 
@@ -111,6 +114,58 @@ If one node is stopped and no heartbeat is received before the timeout, the rema
 Neighbor offline: DEVICE_B
 ```
 
+## Try Go-Back-N Sliding Window (Module 8)
+
+Send a message split into chunks using the GBN sliding-window protocol.
+
+Terminal 1 (receiver):
+
+```powershell
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002
+```
+
+Terminal 2 (GBN sender):
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --send-to 127.0.0.1:5002 --destination DEVICE_B --message "The quick brown fox jumps over the lazy dog" --gbn --window-size 4 --chunks 5
+```
+
+Expected sender output:
+
+```text
+Sending 5 chunks via Go-Back-N (window=4) from DEVICE_A on 127.0.0.1:<port> to 127.0.0.1:5002
+
+--- Go-Back-N Transfer Summary ---
+Chunks sent:       5
+Chunks ACKed:      5
+Retransmissions:   0
+Timeouts:          0
+Final window size: 4
+Loss rate:         0.0%
+
+All 5 chunks delivered successfully.
+```
+
+## Try Adaptive Window Control (Module 9)
+
+Add `--adaptive` to automatically tune the window size during transfer:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --send-to 127.0.0.1:5002 --destination DEVICE_B --message "A long message that will be split into many chunks for transfer over the mesh network" --gbn --window-size 4 --chunks 10 --adaptive
+```
+
+The adaptive controller uses AIMD (Additive Increase / Multiplicative Decrease) and prints its decisions:
+
+```text
+Adaptive window control: ENABLED (initial window=4)
+...
+--- Adaptive Window Controller ---
+Last decision:     increase
+SRTT:              0.0012s
+RTO:               0.1048s
+Corruption rate:   0.0%
+```
+
 ## Project Layout
 
 ```text
@@ -123,4 +178,4 @@ main.py
 requirements.txt
 ```
 
-Later modules can extend this structure with discovery, reliable transport, routing, relay, application, simulator, dashboard, and visualization packages.
+Later modules can extend this structure with routing, relay, application, simulator, dashboard, and visualization packages.
