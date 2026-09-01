@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from enum import Enum
+
+
+PROTOCOL_VERSION = 1
+DEFAULT_BIND_IP = "0.0.0.0"
+DEFAULT_PORT = 5000
+DEFAULT_TTL = 10
+DEFAULT_SOCKET_BUFFER_SIZE = 65_535
+DEFAULT_SOCKET_TIMEOUT_SECONDS = 0.2
+NODE_ID_PREFIX = "DEVICE"
+
+
+class PacketType(str, Enum):
+    DISCOVERY = "DISCOVERY"
+    DISCOVERY_RESPONSE = "DISCOVERY_RESPONSE"
+    ROUTING_UPDATE = "ROUTING_UPDATE"
+    MESSAGE = "MESSAGE"
+    FILE_CHUNK = "FILE_CHUNK"
+    ACK = "ACK"
+    STATUS = "STATUS"
+    HEARTBEAT = "HEARTBEAT"
+
+
+class NodeStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    STOPPED = "STOPPED"
+    DISCONNECTED = "DISCONNECTED"
+
+
+PACKET_TYPE_VALUES = {packet_type.value for packet_type in PacketType}
+
