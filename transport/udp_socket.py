@@ -34,6 +34,10 @@ class UDPSocket:
         self._socket: Optional[socket.socket] = None
         self._receiver_thread: Optional[threading.Thread] = None
         self._running = threading.Event()
+        self._handler_lock = threading.RLock()
+        self._packet_handlers: list[PacketHandler] = []
+        if on_packet:
+            self._packet_handlers.append(on_packet)
 
     @property
     def is_running(self) -> bool:
@@ -61,15 +65,35 @@ class UDPSocket:
         self.host, self.port = self.local_address
         self._running.set()
 
-        if self.on_packet:
-            self._receiver_thread = threading.Thread(
-                target=self._receive_loop,
-                name=f"meshlink-udp-receiver-{self.port}",
-                daemon=True,
-            )
-            self._receiver_thread.start()
+        self._start_receiver_thread()
 
         return self.local_address
+
+    def add_packet_handler(self, handler: PacketHandler) -> None:
+        with self._handler_lock:
+            if handler not in self._packet_handlers:
+                self._packet_handlers.append(handler)
+        self._start_receiver_thread()
+
+    def remove_packet_handler(self, handler: PacketHandler) -> None:
+        with self._handler_lock:
+            self._packet_handlers = [registered for registered in self._packet_handlers if registered != handler]
+
+    def _start_receiver_thread(self) -> None:
+        with self._handler_lock:
+            has_handlers = bool(self._packet_handlers)
+        if not self.is_running or not has_handlers:
+            return
+
+        if self._receiver_thread and self._receiver_thread.is_alive():
+            return
+
+        self._receiver_thread = threading.Thread(
+            target=self._receive_loop,
+            name=f"meshlink-udp-receiver-{self.port}",
+            daemon=True,
+        )
+        self._receiver_thread.start()
 
     def send_packet(self, packet: Mapping | bytes, address: tuple[str, int]) -> int:
         if not self._socket:
@@ -124,8 +148,11 @@ class UDPSocket:
                 continue
 
             packet, address = result
-            if self.on_packet:
-                self.on_packet(packet, address)
+            with self._handler_lock:
+                handlers = list(self._packet_handlers)
+
+            for handler in handlers:
+                handler(packet, address)
 
 
 def start_socket(
@@ -148,4 +175,3 @@ def receive_packet(udp_socket: UDPSocket, timeout: Optional[float] = None) -> Op
 
 def stop_socket(udp_socket: UDPSocket) -> None:
     udp_socket.stop_socket()
-

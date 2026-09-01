@@ -4,11 +4,24 @@ import argparse
 import signal
 import sys
 import threading
+import time
 from typing import Tuple
 
-from core.constants import DEFAULT_PORT, PacketType
+from core.constants import (
+    DEFAULT_DISCOVERY_INTERVAL_SECONDS,
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
+    DEFAULT_PORT,
+    DEFAULT_RELIABLE_ACK_TIMEOUT_SECONDS,
+    DEFAULT_RELIABLE_MAX_RETRIES,
+    PacketType,
+)
 from core.node import MeshNode
 from core.packet import create_packet
+from discovery.discovery_service import DiscoveryService
+from discovery.heartbeat_service import HeartbeatService
+from discovery.neighbor_manager import NeighborManager
+from transport.reliable_transport import ReliableTransport
 
 
 def parse_endpoint(value: str) -> Tuple[str, int]:
@@ -31,7 +44,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-3.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-6.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -43,6 +56,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--send-to", type=parse_endpoint, help="Destination endpoint in host:port format")
     parser.add_argument("--destination", default="UNKNOWN", help="Destination node ID for the packet")
     parser.add_argument("--message", help="Text message to send")
+    parser.add_argument("--reliable", action="store_true", help="Wait for ACKs and retransmit sent messages")
+    parser.add_argument("--ack-timeout", type=float, default=DEFAULT_RELIABLE_ACK_TIMEOUT_SECONDS)
+    parser.add_argument("--max-retries", type=int, default=DEFAULT_RELIABLE_MAX_RETRIES)
+    parser.add_argument("--discover", action="store_true", help="Broadcast discovery and track nearby nodes")
+    parser.add_argument(
+        "--peer",
+        action="append",
+        type=parse_endpoint,
+        default=[],
+        help="Extra discovery/heartbeat target in host:port format. Repeat for multiple local peers.",
+    )
+    parser.add_argument("--discovery-interval", type=float, default=DEFAULT_DISCOVERY_INTERVAL_SECONDS)
+    parser.add_argument("--heartbeat-interval", type=float, default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS)
+    parser.add_argument("--neighbor-timeout", type=float, default=DEFAULT_NEIGHBOR_TIMEOUT_SECONDS)
     return parser
 
 
@@ -52,7 +79,14 @@ def print_packet(packet: dict, address: tuple[str, int]) -> None:
     print(f"Payload: {packet['payload']}")
 
 
-def run_receiver(node: MeshNode) -> int:
+def run_receiver(
+    node: MeshNode,
+    enable_discovery: bool = False,
+    peers: list[tuple[str, int]] | None = None,
+    discovery_interval: float = DEFAULT_DISCOVERY_INTERVAL_SECONDS,
+    heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    neighbor_timeout: float = DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
+) -> int:
     stopped = threading.Event()
 
     def handle_signal(signum: int, frame: object) -> None:
@@ -61,39 +95,142 @@ def run_receiver(node: MeshNode) -> int:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    node.start_networking(on_packet=print_packet)
+    peers = peers or []
+    neighbor_manager = NeighborManager(node.neighbors, self_node_id=node.node_id)
+    announced_neighbors: set[str] = set()
+
+    def handle_neighbor_discovered(neighbor) -> None:
+        if neighbor.node_id in announced_neighbors:
+            return
+        announced_neighbors.add(neighbor.node_id)
+        print(f"Discovered neighbor: {neighbor.node_id} at {neighbor.ip}:{neighbor.port}")
+
+    def handle_neighbor_lost(neighbor) -> None:
+        print(f"Neighbor offline: {neighbor.node_id}")
+
+    node.start_networking()
+    reliable_transport = ReliableTransport(node, udp_socket=node.udp_socket, on_packet=print_packet)
+    reliable_transport.start()
+
+    discovery_service = None
+    heartbeat_service = None
+    if enable_discovery:
+        discovery_service = DiscoveryService(
+            node,
+            udp_socket=node.udp_socket,
+            neighbor_manager=neighbor_manager,
+            interval=discovery_interval,
+            targets=peers,
+            on_neighbor_discovered=handle_neighbor_discovered,
+        )
+        heartbeat_service = HeartbeatService(
+            node,
+            udp_socket=node.udp_socket,
+            neighbor_manager=neighbor_manager,
+            interval=heartbeat_interval,
+            neighbor_timeout=neighbor_timeout,
+            targets=peers,
+            on_neighbor_lost=handle_neighbor_lost,
+        )
+        discovery_service.start()
+        heartbeat_service.start()
+
     print("Node created:")
     print(f"Node ID: {node.node_id}")
     print(f"Port: {node.port}")
     print(f"Status: {node.status}")
+    if enable_discovery:
+        print("Discovery: ACTIVE")
     print("Waiting for UDP packets. Press Ctrl+C to stop.")
 
     try:
+        last_neighbor_print = 0.0
         while not stopped.wait(0.2):
-            pass
+            if not enable_discovery:
+                continue
+
+            now = time.time()
+            if now - last_neighbor_print < 3:
+                continue
+
+            active_neighbors = neighbor_manager.active_neighbors()
+            if active_neighbors:
+                joined = ", ".join(
+                    f"{neighbor.node_id}({neighbor.ip}:{neighbor.port})" for neighbor in active_neighbors
+                )
+                print(f"Active neighbors: {joined}")
+            last_neighbor_print = now
     finally:
+        if heartbeat_service:
+            heartbeat_service.stop()
+        if discovery_service:
+            discovery_service.stop()
+        reliable_transport.stop()
         node.stop_networking()
 
     return 0
 
 
-def run_sender(node: MeshNode, destination_endpoint: tuple[str, int], destination: str, message: str) -> int:
+def run_sender(
+    node: MeshNode,
+    destination_endpoint: tuple[str, int],
+    destination: str,
+    message: str,
+    reliable: bool = False,
+    ack_timeout: float = DEFAULT_RELIABLE_ACK_TIMEOUT_SECONDS,
+    max_retries: int = DEFAULT_RELIABLE_MAX_RETRIES,
+) -> int:
     node.start_networking()
     local_host, local_port = node.udp_socket.local_address
-    packet = create_packet(
-        packet_type=PacketType.MESSAGE,
-        source=node.node_id,
-        destination=destination,
-        sequence_number=1,
-        payload=message,
-    )
-    node.udp_socket.send_packet(packet, destination_endpoint)
-    print(
-        f"Sent MESSAGE packet #1 from {node.node_id} "
-        f"on {local_host}:{local_port} to {destination_endpoint[0]}:{destination_endpoint[1]}"
-    )
-    node.stop_networking()
-    return 0
+    reliable_transport = None
+
+    try:
+        if reliable:
+            reliable_transport = ReliableTransport(
+                node,
+                udp_socket=node.udp_socket,
+                ack_timeout=ack_timeout,
+                max_retries=max_retries,
+            )
+            reliable_transport.start()
+            result = reliable_transport.send_message(
+                destination=destination,
+                address=destination_endpoint,
+                message=message,
+                wait_for_ack=True,
+            )
+            if result.acknowledged:
+                print(
+                    f"Delivered MESSAGE packet #{result.sequence_number} from {node.node_id} "
+                    f"on {local_host}:{local_port} to {destination_endpoint[0]}:{destination_endpoint[1]} "
+                    f"after {result.retries} retries"
+                )
+                return 0
+
+            print(
+                f"Failed to deliver MESSAGE packet #{result.sequence_number}: "
+                f"{result.failed_reason} after {result.retries} retries",
+                file=sys.stderr,
+            )
+            return 1
+
+        packet = create_packet(
+            packet_type=PacketType.MESSAGE,
+            source=node.node_id,
+            destination=destination,
+            sequence_number=1,
+            payload=message,
+        )
+        node.udp_socket.send_packet(packet, destination_endpoint)
+        print(
+            f"Sent MESSAGE packet #1 from {node.node_id} "
+            f"on {local_host}:{local_port} to {destination_endpoint[0]}:{destination_endpoint[1]}"
+        )
+        return 0
+    finally:
+        if reliable_transport:
+            reliable_transport.stop()
+        node.stop_networking()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,9 +246,24 @@ def main(argv: list[str] | None = None) -> int:
             if not args.message:
                 print("--message is required when --send-to is provided", file=sys.stderr)
                 return 2
-            return run_sender(node, args.send_to, args.destination, args.message)
+            return run_sender(
+                node,
+                args.send_to,
+                args.destination,
+                args.message,
+                reliable=args.reliable,
+                ack_timeout=args.ack_timeout,
+                max_retries=args.max_retries,
+            )
 
-        return run_receiver(node)
+        return run_receiver(
+            node,
+            enable_discovery=args.discover,
+            peers=args.peer,
+            discovery_interval=args.discovery_interval,
+            heartbeat_interval=args.heartbeat_interval,
+            neighbor_timeout=args.neighbor_timeout,
+        )
     except PermissionError as exc:
         print(f"Could not bind UDP socket on {node.ip}:{node.port}: {exc}", file=sys.stderr)
         if args.send_to:
