@@ -23,6 +23,8 @@ from core.packet import create_packet
 from discovery.discovery_service import DiscoveryService
 from discovery.heartbeat_service import HeartbeatService
 from discovery.neighbor_manager import NeighborManager
+from routing.link_state import LinkStateService
+from routing.topology import NetworkTopology
 from transport.adaptive_window import AdaptiveWindowController
 from transport.checksum_tracker import ChecksumTracker
 from transport.reliable_transport import ReliableTransport
@@ -49,7 +51,7 @@ def parse_endpoint(value: str) -> Tuple[str, int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-9.")
+    parser = argparse.ArgumentParser(description="Run a MeshLink node for Modules 1-12.")
     parser.add_argument("--node-id", help="Stable node ID, for example DEVICE_A")
     parser.add_argument("--host", default="0.0.0.0", help="Local bind host")
     parser.add_argument(
@@ -82,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunks", type=int, default=5, help="Number of chunks to split the message into for GBN demo")
     # Module 9 — Adaptive window control.
     parser.add_argument("--adaptive", action="store_true", help="Enable adaptive window control (auto-tune window size)")
+    # Module 11 — Link-State routing.
+    parser.add_argument("--link-state", action="store_true", help="Enable Link-State routing with Dijkstra")
+    parser.add_argument("--lsa-interval", type=float, default=5.0, help="Seconds between Link-State Advertisements")
     return parser
 
 
@@ -94,10 +99,12 @@ def print_packet(packet: dict, address: tuple[str, int]) -> None:
 def run_receiver(
     node: MeshNode,
     enable_discovery: bool = False,
+    enable_link_state: bool = False,
     peers: list[tuple[str, int]] | None = None,
     discovery_interval: float = DEFAULT_DISCOVERY_INTERVAL_SECONDS,
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     neighbor_timeout: float = DEFAULT_NEIGHBOR_TIMEOUT_SECONDS,
+    lsa_interval: float = 5.0,
 ) -> int:
     stopped = threading.Event()
 
@@ -126,6 +133,9 @@ def run_receiver(
 
     discovery_service = None
     heartbeat_service = None
+    link_state_service = None
+    topology = None
+
     if enable_discovery:
         discovery_service = DiscoveryService(
             node,
@@ -147,32 +157,51 @@ def run_receiver(
         discovery_service.start()
         heartbeat_service.start()
 
+    if enable_link_state:
+        topology = NetworkTopology(self_node_id=node.node_id)
+        link_state_service = LinkStateService(
+            node,
+            topology,
+            udp_socket=node.udp_socket,
+            interval=lsa_interval,
+            on_route_change=lambda t: print(f"Routes updated: {len(t)} destinations"),
+        )
+        link_state_service.start()
+
     print("Node created:")
     print(f"Node ID: {node.node_id}")
     print(f"Port: {node.port}")
     print(f"Status: {node.status}")
     if enable_discovery:
         print("Discovery: ACTIVE")
+    if enable_link_state:
+        print("Link-State Routing: ACTIVE")
     print("Waiting for UDP packets. Press Ctrl+C to stop.")
 
     try:
         last_neighbor_print = 0.0
         while not stopped.wait(0.2):
-            if not enable_discovery:
-                continue
-
             now = time.time()
             if now - last_neighbor_print < 3:
                 continue
 
-            active_neighbors = neighbor_manager.active_neighbors()
-            if active_neighbors:
-                joined = ", ".join(
-                    f"{neighbor.node_id}({neighbor.ip}:{neighbor.port})" for neighbor in active_neighbors
-                )
-                print(f"Active neighbors: {joined}")
+            if enable_discovery:
+                active_neighbors = neighbor_manager.active_neighbors()
+                if active_neighbors:
+                    joined = ", ".join(
+                        f"{neighbor.node_id}({neighbor.ip}:{neighbor.port})" for neighbor in active_neighbors
+                    )
+                    print(f"Active neighbors: {joined}")
+
+            if enable_link_state and link_state_service:
+                table = link_state_service.current_routing_table()
+                if table:
+                    print(link_state_service.format_routing_table())
+
             last_neighbor_print = now
     finally:
+        if link_state_service:
+            link_state_service.stop()
         if heartbeat_service:
             heartbeat_service.stop()
         if discovery_service:
@@ -371,10 +400,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_receiver(
             node,
             enable_discovery=args.discover,
+            enable_link_state=args.link_state,
             peers=args.peer,
             discovery_interval=args.discovery_interval,
             heartbeat_interval=args.heartbeat_interval,
             neighbor_timeout=args.neighbor_timeout,
+            lsa_interval=args.lsa_interval,
         )
     except PermissionError as exc:
         print(f"Could not bind UDP socket on {node.ip}:{node.port}: {exc}", file=sys.stderr)

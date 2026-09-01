@@ -1,6 +1,6 @@
 # MeshLink
 
-MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-9 from the implementation plan:
+MeshLink is an academic offline mesh communication prototype. This repository currently implements Modules 1-12 from the implementation plan:
 
 - Module 1: node management
 - Module 2: packet design, serialization, and checksums
@@ -11,6 +11,9 @@ MeshLink is an academic offline mesh communication prototype. This repository cu
 - Module 7: checksum-based error detection with corruption statistics
 - Module 8: Go-Back-N sliding window protocol
 - Module 9: adaptive window control (AIMD + RTT-based timeout)
+- Module 10: network topology management (weighted graph)
+- Module 11: Link-State routing with LSA flooding
+- Module 12: Dijkstra's shortest-path algorithm
 
 ## Setup
 
@@ -22,7 +25,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Modules 1-9 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
+Modules 1-12 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
 
 ## Run Tests
 
@@ -166,16 +169,46 @@ RTO:               0.1048s
 Corruption rate:   0.0%
 ```
 
+## Try Link-State Routing (Modules 10-12)
+
+Run two nodes with discovery and link-state routing enabled. Each node builds a network topology graph and runs Dijkstra's algorithm to compute shortest paths.
+
+Terminal 1:
+
+```powershell
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --peer 127.0.0.1:5002 --lsa-interval 3
+```
+
+Terminal 2:
+
+```powershell
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --link-state --peer 127.0.0.1:5003 --lsa-interval 3
+```
+
+Expected output after a few seconds:
+
+```text
+Discovered neighbor: DEVICE_B at 127.0.0.1:5002
+Link-State Routing: ACTIVE
+Routes updated: 1 destinations
+Destination     Next Hop          Cost
+--------------------------------------
+DEVICE_B        DEVICE_B             1
+```
+
+For a 3-node chain (A -- B -- C), start a third terminal and both A and C will discover a 2-hop route to each other through B.
+
 ## Project Layout
 
 ```text
 config/
 core/
 discovery/
+routing/
 transport/
 tests/
 main.py
 requirements.txt
 ```
 
-Later modules can extend this structure with routing, relay, application, simulator, dashboard, and visualization packages.
+Later modules can extend this structure with relay, application, simulator, dashboard, and visualization packages.
