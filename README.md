@@ -40,6 +40,17 @@ python -m pip install -r requirements.txt
 
 Modules 1-25 use only the Python standard library, so `requirements.txt` is intentionally empty for now.
 
+## Local Port Plan
+
+Use only these local ports for manual testing on this laptop:
+
+- `5002`: default UDP node port, or Node A in multi-node demos
+- `5003`: Node B / relay node in multi-node demos
+- `5004`: Node C in multi-node demos
+- `5010`: web dashboard
+
+Sender-only commands omit `--port`, so Windows picks a free temporary sender port automatically.
+
 ## Run Tests
 
 ```powershell
@@ -101,27 +112,27 @@ On one machine, use explicit `--peer` targets because each local test node must 
 Terminal 1:
 
 ```powershell
-python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --peer 127.0.0.1:5002
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5002 --discover --peer 127.0.0.1:5003
 ```
 
 Terminal 2:
 
 ```powershell
-python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --peer 127.0.0.1:5003
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5003 --discover --peer 127.0.0.1:5002
 ```
 
 Expected output after a few seconds:
 
 ```text
-Discovered neighbor: DEVICE_B at 127.0.0.1:5002
-Active neighbors: DEVICE_B(127.0.0.1:5002)
+Discovered neighbor: DEVICE_B at 127.0.0.1:5003
+Active neighbors: DEVICE_B(127.0.0.1:5003)
 ```
 
 and in the other terminal:
 
 ```text
-Discovered neighbor: DEVICE_A at 127.0.0.1:5003
-Active neighbors: DEVICE_A(127.0.0.1:5003)
+Discovered neighbor: DEVICE_A at 127.0.0.1:5002
+Active neighbors: DEVICE_A(127.0.0.1:5002)
 ```
 
 If one node is stopped and no heartbeat is received before the timeout, the remaining node prints:
@@ -189,19 +200,19 @@ Run two nodes with discovery and link-state routing enabled. Each node builds a 
 Terminal 1:
 
 ```powershell
-python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --peer 127.0.0.1:5002 --lsa-interval 3
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5002 --discover --link-state --peer 127.0.0.1:5003 --lsa-interval 3
 ```
 
 Terminal 2:
 
 ```powershell
-python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --link-state --peer 127.0.0.1:5003 --lsa-interval 3
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5003 --discover --link-state --peer 127.0.0.1:5002 --lsa-interval 3
 ```
 
 Expected output after a few seconds:
 
 ```text
-Discovered neighbor: DEVICE_B at 127.0.0.1:5002
+Discovered neighbor: DEVICE_B at 127.0.0.1:5003
 Link-State Routing: ACTIVE
 Routes updated: 1 destinations
 Destination     Next Hop          Cost
@@ -218,13 +229,13 @@ Use `--distance-vector` instead of `--link-state` to use the Bellman-Ford algori
 Terminal 1:
 
 ```powershell
-python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --distance-vector --peer 127.0.0.1:5002 --routing-interval 3
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5002 --discover --distance-vector --peer 127.0.0.1:5003 --routing-interval 3
 ```
 
 Terminal 2:
 
 ```powershell
-python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --distance-vector --peer 127.0.0.1:5003 --routing-interval 3
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5003 --discover --distance-vector --peer 127.0.0.1:5002 --routing-interval 3
 ```
 
 The `--routing-interval` flag controls how often distance vectors are sent.
@@ -236,25 +247,25 @@ Add `--forward` to enable relay mode. In a 3-node chain (A -- B -- C), node B ca
 Terminal 1 (Node A):
 
 ```powershell
-python main.py --node-id A --host 127.0.0.1 --port 5001 --discover --link-state --forward --peer 127.0.0.1:5002
+python main.py --node-id A --host 127.0.0.1 --port 5002 --discover --link-state --forward --peer 127.0.0.1:5003
 ```
 
 Terminal 2 (Node B — relay):
 
 ```powershell
-python main.py --node-id B --host 127.0.0.1 --port 5002 --discover --link-state --forward --peer 127.0.0.1:5001 --peer 127.0.0.1:5003
+python main.py --node-id B --host 127.0.0.1 --port 5003 --discover --link-state --forward --peer 127.0.0.1:5002 --peer 127.0.0.1:5004
 ```
 
 Terminal 3 (Node C):
 
 ```powershell
-python main.py --node-id C --host 127.0.0.1 --port 5003 --discover --link-state --forward --peer 127.0.0.1:5002
+python main.py --node-id C --host 127.0.0.1 --port 5004 --discover --link-state --forward --peer 127.0.0.1:5003
 ```
 
 Now send from A to C (which goes through B):
 
 ```powershell
-python main.py --node-id A --host 127.0.0.1 --send-to 127.0.0.1:5001 --destination C --message "Hello C via relay"
+python main.py --node-id A --host 127.0.0.1 --send-to 127.0.0.1:5002 --destination C --message "Hello C via relay"
 ```
 
 Node B will print:
@@ -400,13 +411,13 @@ Dropped by failure: 5
 Run nodes with discovery, routing, self-healing, and periodic topology output:
 
 ```powershell
-python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --self-heal --print-topology --peer 127.0.0.1:5002 --neighbor-timeout 5
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5002 --discover --link-state --self-heal --print-topology --peer 127.0.0.1:5003 --neighbor-timeout 5
 ```
 
 In another terminal:
 
 ```powershell
-python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5002 --discover --link-state --self-heal --peer 127.0.0.1:5003 --neighbor-timeout 5
+python main.py --node-id DEVICE_B --host 127.0.0.1 --port 5003 --discover --link-state --self-heal --peer 127.0.0.1:5002 --neighbor-timeout 5
 ```
 
 Stop `DEVICE_B`. After the timeout, `DEVICE_A` prints:
@@ -418,21 +429,42 @@ Self-healing: removed failed node DEVICE_B; purged routes: ...
 
 The topology output lists nodes, links, and routes.
 
-## Try Web Dashboard (Module 25)
+## Try Web Dashboard (Module 25 & React Mission Control)
 
 Start a node with dashboard enabled:
 
 ```powershell
-python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5003 --discover --link-state --self-heal --status-listen --dashboard --dashboard-port 8080 --peer 127.0.0.1:5002
+python main.py --node-id DEVICE_A --host 127.0.0.1 --port 5002 --discover --link-state --self-heal --status-listen --dashboard --dashboard-port 5010 --peer 127.0.0.1:5003
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:5010
 ```
 
-The dashboard shows node status, nearby devices, routes, topology, transfer statistics, and received status broadcasts.
+The compiled React SPA is served directly by the Python node without requiring Node.js to be running. It provides an interactive mission-control interface featuring:
+* Animated SVG radar mesh topology with live packet flight animations
+* Interactive Showcase Control Deck for triggering messaging, GBN sliding window, emergency alerts, and chaos impairment
+* Live routing table & convergence viewer (Dijkstra vs. Bellman-Ford)
+* Real-time system telemetry and decentralized chat streams
+
+### Optional: React Development Server (Vite)
+
+If modifying the React frontend with hot module replacement:
+
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run dev
+```
+
+Open `http://localhost:5173` (proxies all API requests to the Python node on port `5010`).
+To re-build the production bundle:
+
+```powershell
+npm.cmd run build
+```
 
 ## Project Layout
 

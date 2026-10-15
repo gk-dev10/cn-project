@@ -7,8 +7,8 @@ from visualization.topology_visualizer import TopologyVisualizer
 
 class TopologyVisualizerTests(unittest.TestCase):
     def test_snapshot_contains_nodes_links_and_routes(self):
-        node = MeshNode(node_id="A", ip="127.0.0.1", port=5001)
-        node.add_neighbor("B", "127.0.0.1", 5002)
+        node = MeshNode(node_id="A", ip="127.0.0.1", port=5002)
+        node.add_neighbor("B", "127.0.0.1", 5003)
         node.update_route("B", "B", cost=1)
         topology = NetworkTopology(self_node_id="A")
         topology.add_link("A", "B")
@@ -26,4 +26,3 @@ class TopologyVisualizerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

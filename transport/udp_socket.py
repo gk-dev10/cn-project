@@ -5,7 +5,12 @@ import socket
 import threading
 from typing import Callable, Optional
 
-from core.constants import DEFAULT_SOCKET_BUFFER_SIZE, DEFAULT_SOCKET_TIMEOUT_SECONDS
+from core.constants import (
+    DEFAULT_BIND_IP,
+    DEFAULT_PORT,
+    DEFAULT_SOCKET_BUFFER_SIZE,
+    DEFAULT_SOCKET_TIMEOUT_SECONDS,
+)
 from core.packet import PacketError, deserialize_packet, serialize_packet
 
 
@@ -16,8 +21,8 @@ ErrorHandler = Callable[[Exception], None]
 class UDPSocket:
     def __init__(
         self,
-        host: str = "0.0.0.0",
-        port: int = 5000,
+        host: str = DEFAULT_BIND_IP,
+        port: int = DEFAULT_PORT,
         on_packet: Optional[PacketHandler] = None,
         on_error: Optional[ErrorHandler] = None,
         buffer_size: int = DEFAULT_SOCKET_BUFFER_SIZE,
@@ -156,8 +161,8 @@ class UDPSocket:
 
 
 def start_socket(
-    host: str = "0.0.0.0",
-    port: int = 5000,
+    host: str = DEFAULT_BIND_IP,
+    port: int = DEFAULT_PORT,
     on_packet: Optional[PacketHandler] = None,
 ) -> UDPSocket:
     udp_socket = UDPSocket(host=host, port=port, on_packet=on_packet)

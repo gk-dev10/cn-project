@@ -97,19 +97,19 @@ class HeartbeatServiceTests(unittest.TestCase):
         packet = create_packet(
             PacketType.HEARTBEAT,
             source="DEVICE_A",
-            payload={"node_id": "DEVICE_A", "ip": "127.0.0.1", "port": 5001},
+            payload={"node_id": "DEVICE_A", "ip": "127.0.0.1", "port": 5003},
         )
 
-        heartbeat.handle_packet(packet, ("127.0.0.1", 5001))
+        heartbeat.handle_packet(packet, ("127.0.0.1", 5003))
 
         neighbor = manager.get_neighbor("DEVICE_A")
         self.assertIsNotNone(neighbor)
         self.assertEqual(neighbor.status, NodeStatus.ACTIVE.value)
 
     def test_check_failures_marks_stale_neighbors_disconnected(self):
-        node_a = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=5001)
+        node_a = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=5002)
         manager = NeighborManager(node_a.neighbors, self_node_id=node_a.node_id)
-        manager.update_neighbor("DEVICE_B", "127.0.0.1", 5002, now=time.time() - 20)
+        manager.update_neighbor("DEVICE_B", "127.0.0.1", 5003, now=time.time() - 20)
         heartbeat = HeartbeatService(node_a, neighbor_manager=manager, neighbor_timeout=1.0)
 
         lost = heartbeat.check_failures()
@@ -120,4 +120,3 @@ class HeartbeatServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

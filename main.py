@@ -258,6 +258,7 @@ def run_receiver(
     )
     announced_neighbors: set[str] = set()
     self_healer = None
+    dashboard = None
 
     def handle_neighbor_discovered(neighbor) -> None:
         if neighbor.node_id in announced_neighbors:
@@ -265,15 +266,40 @@ def run_receiver(
         announced_neighbors.add(neighbor.node_id)
         if topology:
             topology.add_link(node.node_id, neighbor.node_id, cost=1)
+        if dashboard:
+            dashboard.record_event("discovery", f"Discovered neighbor: {neighbor.node_id} ({neighbor.ip}:{neighbor.port})")
         print(f"Discovered neighbor: {neighbor.node_id} at {neighbor.ip}:{neighbor.port}")
 
     def handle_neighbor_lost(neighbor) -> None:
         if self_healer:
             self_healer.handle_neighbor_lost(neighbor)
+        if dashboard:
+            dashboard.record_event("heartbeat", f"Neighbor offline: {neighbor.node_id}", level="warning")
         print(f"Neighbor offline: {neighbor.node_id}")
 
+    def on_dashboard_message(msg) -> None:
+        if dashboard:
+            dashboard.record_message(
+                source=msg.source,
+                destination=msg.destination,
+                text=msg.text,
+                sequence=msg.sequence_number,
+                is_outgoing=False,
+            )
+            dashboard.record_event("messaging", f"Message from {msg.source}: {msg.text}")
+        print_message(msg)
+
+    def on_dashboard_status(status_obj) -> None:
+        if dashboard:
+            dashboard.record_event(
+                "status",
+                f"Emergency Status [{status_obj.status}] from {status_obj.source}: {status_obj.message or ''}",
+                level="warning" if status_obj.status != "SAFE" else "info",
+            )
+        print_status(status_obj)
+
     node.start_networking()
-    messaging_service = MessagingService(node, udp_socket=node.udp_socket, on_message=print_message)
+    messaging_service = MessagingService(node, udp_socket=node.udp_socket, on_message=on_dashboard_message)
     reliable_transport = ReliableTransport(
         node,
         udp_socket=node.udp_socket,
@@ -289,7 +315,6 @@ def run_receiver(
     file_receiver = None
     gbn_receiver = None
     status_service = None
-    dashboard = None
 
     def handle_local_packet(packet: dict, address: tuple[str, int]) -> None:
         packet_type = packet.get("type")
@@ -364,7 +389,7 @@ def run_receiver(
             node,
             udp_socket=node.udp_socket,
             targets=peers,
-            on_status=print_status,
+            on_status=on_dashboard_status,
         )
         status_service.start()
 
@@ -384,6 +409,11 @@ def run_receiver(
                 file_receiver=file_receiver,
                 self_healer=self_healer,
             ),
+            messaging_service=messaging_service,
+            reliable_transport=reliable_transport,
+            routing_manager=routing_manager,
+            self_healer=self_healer,
+            peers=peers,
         )
         dashboard.start(block=False)
 
@@ -392,9 +422,15 @@ def run_receiver(
             node,
             udp_socket=node.udp_socket,
             on_local_deliver=handle_local_packet,
-            on_drop=lambda pkt, reason, addr: print(f"Dropped packet from {pkt.get('source')}: {reason}"),
-            on_forward=lambda pkt, hop, addr: print(
-                f"Forwarded packet from {pkt.get('source')} to {pkt.get('destination')} via {hop}"
+            on_drop=lambda pkt, reason, addr: (
+                print(f"Dropped packet from {pkt.get('source')}: {reason}"),
+                dashboard.record_event("relay", f"Dropped packet from {pkt.get('source')}: {reason}", level="warning") if dashboard else None,
+            ),
+            on_forward=lambda pkt, hop, addr: (
+                print(
+                    f"Forwarded packet from {pkt.get('source')} to {pkt.get('destination')} via {hop}"
+                ),
+                dashboard.record_event("relay", f"Forwarded packet from {pkt.get('source')} to {pkt.get('destination')} via {hop}") if dashboard else None,
             ),
         )
         forwarder.start()

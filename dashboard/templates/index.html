@@ -3,64 +3,357 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>MeshLink Dashboard</title>
+    <title>MeshLink — Tactical Offline Mesh Mission Control</title>
+    <meta name="description" content="MeshLink decentralized ad-hoc mesh communication prototype and interactive evaluation dashboard.">
+    <!-- Google Fonts: Outfit & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/styles.css">
   </head>
   <body>
+    <!-- Top Tactical Navigation Bar -->
     <header class="topbar">
-      <div>
-        <h1>MeshLink</h1>
-        <p id="nodeLine">Node loading</p>
+      <div class="topbar-branding">
+        <div class="logo-mark">
+          <span class="radar-dot"></span>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div>
+          <div class="title-row">
+            <h1>MeshLink</h1>
+            <span class="badge badge-accent">Mission Control</span>
+            <span id="routingBadge" class="badge badge-purple">Link-State (Dijkstra)</span>
+          </div>
+          <p id="nodeLine" class="node-meta">Connecting to mesh node...</p>
+        </div>
       </div>
+
+      <div class="topbar-telemetry">
+        <div class="telemetry-item">
+          <span class="telemetry-label">Active Peers</span>
+          <span id="neighborCount" class="telemetry-value text-emerald">0</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Known Routes</span>
+          <span id="routeCount" class="telemetry-value text-cyan">0</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Channel Loss</span>
+          <span id="lossRateDisplay" class="telemetry-value text-amber">0.0%</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Status</span>
+          <span id="networkStatus" class="status-pill status-active">ONLINE</span>
+        </div>
+      </div>
+
       <div class="topbar-actions">
-        <button id="refreshBtn" type="button" title="Refresh">Refresh</button>
-        <button id="safeBtn" type="button" title="Broadcast safe status">I'm Safe</button>
+        <button id="pollToggleBtn" class="btn btn-secondary" title="Pause or resume live polling">
+          <span class="pulse-indicator"></span> Auto-Sync: ON
+        </button>
+        <button id="quickSafeBtn" class="btn btn-emerald" title="Broadcast SAFE status to all peers">
+          🛡️ I'm Safe
+        </button>
       </div>
     </header>
 
-    <main class="layout">
+    <!-- Main Mission Control Grid -->
+    <main class="dashboard-grid">
+      <!-- CENTER: Primary Topology Radar Visualizer -->
       <section class="panel topology-panel" aria-labelledby="topologyTitle">
         <div class="panel-header">
-          <h2 id="topologyTitle">Topology</h2>
-          <span id="networkStatus" class="status-pill">Loading</span>
+          <div class="panel-header-left">
+            <h2 id="topologyTitle">Live Mesh Topology & Radar</h2>
+            <span class="panel-subtitle">Real-time link costs, node health, and multi-hop routing paths</span>
+          </div>
+          <div class="topology-controls">
+            <button id="btnSwitchLS" class="btn-chip active" title="Switch to Link-State Routing (Dijkstra)">Dijkstra (LS)</button>
+            <button id="btnSwitchDV" class="btn-chip" title="Switch to Distance-Vector Routing (Bellman-Ford)">Bellman-Ford (DV)</button>
+            <button id="refreshBtn" class="btn-chip" title="Force Refresh">↻ Sync</button>
+          </div>
         </div>
-        <svg id="topologySvg" viewBox="0 0 720 420" role="img" aria-label="Mesh topology"></svg>
+
+        <div class="canvas-wrapper">
+          <svg id="topologySvg" viewBox="0 0 860 460" role="img" aria-label="Interactive mesh network topology"></svg>
+          <div class="topology-legend">
+            <span class="legend-item"><span class="legend-dot self"></span> Local Node</span>
+            <span class="legend-item"><span class="legend-dot peer"></span> Discovered Peer</span>
+            <span class="legend-item"><span class="legend-dot active-link"></span> Active Link</span>
+            <span class="legend-item"><span class="legend-dot route-hop"></span> Next-Hop Route</span>
+          </div>
+        </div>
       </section>
 
-      <section class="panel" aria-labelledby="neighborsTitle">
+      <!-- RIGHT SIDEBAR: Showcase Interactive Control Deck -->
+      <section class="panel control-deck-panel" aria-labelledby="controlTitle">
         <div class="panel-header">
-          <h2 id="neighborsTitle">Nearby Devices</h2>
-          <span id="neighborCount">0</span>
+          <div>
+            <h2 id="controlTitle">Showcase Evaluation Deck</h2>
+            <span class="panel-subtitle">Trigger live protocol demonstrations for evaluation</span>
+          </div>
         </div>
-        <div id="neighbors" class="list"></div>
+
+        <!-- Showcase Navigation Tabs -->
+        <nav class="showcase-tabs" role="tablist">
+          <button class="tab-btn active" data-tab="tab-messaging" role="tab">1. Message & Relay</button>
+          <button class="tab-btn" data-tab="tab-gbn" role="tab">2. Sliding Window</button>
+          <button class="tab-btn" data-tab="tab-emergency" role="tab">3. Disaster SOS</button>
+          <button class="tab-btn" data-tab="tab-chaos" role="tab">4. Chaos & Healing</button>
+        </nav>
+
+        <div class="tab-content-area">
+          <!-- TAB 1: Messaging & Multi-Hop Relay Showcase -->
+          <div id="tab-messaging" class="tab-pane active" role="tabpanel">
+            <h3 class="pane-title">Direct & Multi-Hop Messaging (Modules 3, 6, 16)</h3>
+            <p class="pane-desc">Test stop-and-wait reliable delivery with retries or test multi-hop packet forwarding across intermediate nodes.</p>
+
+            <form id="messageForm" class="control-form">
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="msgDestination">Destination Node ID</label>
+                  <input type="text" id="msgDestination" list="nodeSuggestions" placeholder="e.g. DEVICE_B or C" required>
+                  <datalist id="nodeSuggestions"></datalist>
+                </div>
+                <div class="form-group flex-1">
+                  <label for="msgAddress">Override IP:Port (Optional)</label>
+                  <input type="text" id="msgAddress" placeholder="e.g. 127.0.0.1:5003">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="msgText">Message Payload</label>
+                <input type="text" id="msgText" placeholder="Enter message to transmit through mesh..." value="Need status update from forward outpost" required>
+              </div>
+
+              <div class="form-row items-center">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="msgReliable" checked>
+                  <span class="slider"></span>
+                  <span class="toggle-label">Reliable Mode (ACK Retransmission)</span>
+                </label>
+                <button type="submit" id="btnSendMessage" class="btn btn-primary ml-auto">
+                  🚀 Transmit Packet
+                </button>
+              </div>
+            </form>
+
+            <div class="quick-status-box" id="messageSendFeedback">
+              <span class="box-label">Transmission Status:</span>
+              <span id="sendFeedbackText" class="text-muted">Awaiting send command...</span>
+            </div>
+          </div>
+
+          <!-- TAB 2: Go-Back-N & Adaptive AIMD Window Showcase -->
+          <div id="tab-gbn" class="tab-pane" role="tabpanel">
+            <h3 class="pane-title">Sliding Window & AIMD Congestion Control (Modules 8 & 9)</h3>
+            <p class="pane-desc">Pipelined chunk transmission with Go-Back-N retransmission and dynamic AIMD window tuning.</p>
+
+            <form id="gbnForm" class="control-form">
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="gbnDestination">Destination Node</label>
+                  <input type="text" id="gbnDestination" placeholder="e.g. DEVICE_B" required>
+                </div>
+                <div class="form-group">
+                  <label for="gbnChunks">Total Chunks</label>
+                  <input type="number" id="gbnChunks" min="2" max="25" value="6">
+                </div>
+                <div class="form-group">
+                  <label for="gbnWindowSize">Window Size</label>
+                  <input type="number" id="gbnWindowSize" min="1" max="10" value="4">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="gbnPayload">Payload to Chunk & Stream</label>
+                <input type="text" id="gbnPayload" value="Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo">
+              </div>
+
+              <div class="form-row items-center">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="gbnAdaptive" checked>
+                  <span class="slider"></span>
+                  <span class="toggle-label">Enable Adaptive Window Control (AIMD)</span>
+                </label>
+                <button type="submit" id="btnStartGbn" class="btn btn-primary ml-auto">
+                  ⚡ Stream Chunks
+                </button>
+              </div>
+            </form>
+
+            <!-- Live Sliding Window Visualizer -->
+            <div class="window-monitor-box">
+              <div class="box-header">
+                <span>Active Window Pipeline</span>
+                <span id="gbnStatusPill" class="badge badge-neutral">IDLE</span>
+              </div>
+              <div id="windowTrack" class="window-track">
+                <div class="chunk-slot">Idle</div>
+              </div>
+              <div class="telemetry-mini-row">
+                <span>SRTT: <strong id="valSrtt">0.000s</strong></span>
+                <span>RTO: <strong id="valRto">0.000s</strong></span>
+                <span>Window ($W$): <strong id="valWindow">4</strong></span>
+                <span>Retries: <strong id="valRetries">0</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 3: Emergency Status & Disaster GPS Showcase -->
+          <div id="tab-emergency" class="tab-pane" role="tabpanel">
+            <h3 class="pane-title">Disaster Emergency Broadcast & GPS (Modules 20 & 21)</h3>
+            <p class="pane-desc">Broadcast emergency status across all mesh nodes with duplicate-suppression and geographic telemetry.</p>
+
+            <div class="quick-alert-buttons">
+              <button class="btn btn-emerald-soft btn-sos" data-status="SAFE" data-msg="All personnel accounted for">
+                🟢 Broadcast SAFE
+              </button>
+              <button class="btn btn-amber-soft btn-sos" data-status="NEED_SUPPLIES" data-msg="Power generator low on fuel">
+                🟡 Need Supplies
+              </button>
+              <button class="btn btn-red-soft btn-sos" data-status="CRITICAL_SOS" data-msg="Structural collapse near sector 3">
+                🔴 CRITICAL SOS
+              </button>
+            </div>
+
+            <form id="customSosForm" class="control-form mt-3">
+              <div class="form-group">
+                <label for="sosMessage">Emergency Situation Report</label>
+                <input type="text" id="sosMessage" placeholder="Specific situation details..." value="Medical triage station operational">
+              </div>
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="sosLat">Latitude</label>
+                  <input type="number" step="0.0001" id="sosLat" value="12.9716">
+                </div>
+                <div class="form-group flex-1">
+                  <label for="sosLon">Longitude</label>
+                  <input type="number" step="0.0001" id="sosLon" value="77.5946">
+                </div>
+                <div class="form-group flex-1">
+                  <label for="sosLabel">Location Tag</label>
+                  <input type="text" id="sosLabel" value="Shelter 4">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-red w-full">🚨 Transmit Emergency Broadcast</button>
+            </form>
+          </div>
+
+          <!-- TAB 4: Chaos & Self-Healing Showcase -->
+          <div id="tab-chaos" class="tab-pane" role="tabpanel">
+            <h3 class="pane-title">Impairment Simulation & Self-Healing (Modules 22 & 23)</h3>
+            <p class="pane-desc">Inject artificial packet drop and latency, or simulate a severed node link to prove self-healing route pruning.</p>
+
+            <div class="chaos-controls">
+              <div class="slider-group">
+                <div class="slider-label">
+                  <span>Packet Drop Rate:</span>
+                  <strong id="sliderLossVal">0%</strong>
+                </div>
+                <input type="range" id="sliderLoss" min="0" max="60" step="5" value="0">
+              </div>
+
+              <div class="slider-group">
+                <div class="slider-label">
+                  <span>Artificial Delay:</span>
+                  <strong id="sliderDelayVal">0 ms</strong>
+                </div>
+                <input type="range" id="sliderDelay" min="0" max="400" step="20" value="0">
+              </div>
+
+              <div class="form-row mt-2">
+                <button id="btnApplyImpairment" class="btn btn-secondary flex-1">Apply Impairments</button>
+                <button id="btnResetImpairment" class="btn btn-chip">Reset</button>
+              </div>
+            </div>
+
+            <div class="sever-box mt-3">
+              <span class="box-label">Simulate Node Failure (Demonstrate Self-Healing):</span>
+              <div class="form-row mt-1">
+                <select id="selectSeverNode" class="flex-1">
+                  <option value="">-- Choose node to drop --</option>
+                </select>
+                <button id="btnSeverNode" class="btn btn-red">✂️ Sever Node</button>
+              </div>
+              <p class="hint-text">Watch the network topology immediately re-converge and purge broken routes!</p>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel" aria-labelledby="routesTitle">
+      <!-- BOTTOM LEFT: Dual Routes & Neighbor Cards -->
+      <section class="panel sub-panel" aria-labelledby="networkStateTitle">
         <div class="panel-header">
-          <h2 id="routesTitle">Routes</h2>
-          <span id="routeCount">0</span>
+          <h2 id="networkStateTitle">Discovered Devices & Routing Table</h2>
+          <span id="updatedAt" class="timestamp-tag">--:--:--</span>
         </div>
-        <div id="routes" class="list"></div>
+
+        <div class="dual-columns">
+          <div class="column-block">
+            <div class="block-title">Nearby One-Hop Devices (<span id="neighborCountSmall">0</span>)</div>
+            <div id="neighbors" class="device-card-list">
+              <div class="empty-hint">Scanning local network for beacons...</div>
+            </div>
+          </div>
+
+          <div class="column-block">
+            <div class="block-title">Computed Multi-Hop Routes (<span id="routeCountSmall">0</span>)</div>
+            <div id="routes" class="route-table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Destination</th>
+                    <th>Next Hop</th>
+                    <th>Metric</th>
+                  </tr>
+                </thead>
+                <tbody id="routesTableBody">
+                  <tr><td colspan="3" class="text-muted">No routes computed yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel" aria-labelledby="metricsTitle">
+      <!-- BOTTOM RIGHT: Live Event Console & Emergency Feed -->
+      <section class="panel sub-panel" aria-labelledby="telemetryTitle">
         <div class="panel-header">
-          <h2 id="metricsTitle">Transfer Statistics</h2>
-          <span id="updatedAt">--</span>
+          <div class="tab-header-pills">
+            <button class="pill-btn active" data-sub="feed-events">System Event Log (<span id="eventCount">0</span>)</button>
+            <button class="pill-btn" data-sub="feed-chat">Decentralized Chat (<span id="chatCount">0</span>)</button>
+            <button class="pill-btn" data-sub="feed-sos">Disaster SOS Alerts (<span id="statusCount">0</span>)</button>
+          </div>
+          <button id="clearLogBtn" class="btn-chip" title="Clear console">Clear</button>
         </div>
-        <div id="metrics" class="metrics-grid"></div>
-      </section>
 
-      <section class="panel" aria-labelledby="statusTitle">
-        <div class="panel-header">
-          <h2 id="statusTitle">Status Broadcasts</h2>
-          <span id="statusCount">0</span>
+        <div class="feed-container">
+          <!-- Feed 1: Event Log -->
+          <div id="feed-events" class="feed-pane active">
+            <div id="eventConsole" class="terminal-log-flow"></div>
+          </div>
+
+          <!-- Feed 2: Live Chat Feed -->
+          <div id="feed-chat" class="feed-pane">
+            <div id="chatMessageFlow" class="chat-message-flow"></div>
+          </div>
+
+          <!-- Feed 3: SOS Feed -->
+          <div id="feed-sos" class="feed-pane">
+            <div id="sosAlertList" class="sos-alert-flow"></div>
+          </div>
         </div>
-        <div id="statuses" class="list"></div>
       </section>
     </main>
+
+    <!-- Notification Toast Container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
     <script src="/static/js/app.js"></script>
   </body>
 </html>
-

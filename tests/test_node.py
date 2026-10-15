@@ -20,9 +20,9 @@ class MeshNodeTests(unittest.TestCase):
         self.assertEqual(data["status"], NodeStatus.ACTIVE.value)
 
     def test_neighbor_lifecycle_and_routes(self):
-        node = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=5000)
+        node = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=5002)
 
-        neighbor = node.add_neighbor("DEVICE_B", "127.0.0.1", 5002)
+        neighbor = node.add_neighbor("DEVICE_B", "127.0.0.1", 5003)
         self.assertEqual(neighbor.node_id, "DEVICE_B")
         self.assertEqual(node.neighbors["DEVICE_B"].status, NodeStatus.ACTIVE.value)
 
@@ -38,4 +38,3 @@ class MeshNodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

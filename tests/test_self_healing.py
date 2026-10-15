@@ -9,10 +9,10 @@ from routing.topology import NetworkTopology
 
 class SelfHealingManagerTests(unittest.TestCase):
     def test_failed_neighbor_purges_routes_and_topology(self):
-        node = MeshNode(node_id="A", ip="127.0.0.1", port=5001)
+        node = MeshNode(node_id="A", ip="127.0.0.1", port=5002)
         manager = NeighborManager(node.neighbors, self_node_id="A")
-        manager.update_neighbor("B", "127.0.0.1", 5002)
-        manager.update_neighbor("C", "127.0.0.1", 5003)
+        manager.update_neighbor("B", "127.0.0.1", 5003)
+        manager.update_neighbor("C", "127.0.0.1", 5004)
         node.update_route("B", "B", cost=1)
         node.update_route("C", "B", cost=2)
 
@@ -34,4 +34,3 @@ class SelfHealingManagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
