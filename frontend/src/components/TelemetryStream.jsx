@@ -26,28 +26,34 @@ export default function TelemetryStream({
   return (
     <section className="panel sub-panel" aria-labelledby="telemetryTitle">
       <div className="panel-header">
-        <div className="tab-header-pills">
+        <div className="tab-header-pills" role="group" aria-label="Telemetry feeds">
           <button
+            type="button"
             className={`pill-btn ${activeFeed === 'events' ? 'active' : ''}`}
             onClick={() => setActiveFeed('events')}
+            aria-pressed={activeFeed === 'events'}
           >
             System Event Log ({events.length})
           </button>
           <button
+            type="button"
             className={`pill-btn ${activeFeed === 'chat' ? 'active' : ''}`}
             onClick={() => setActiveFeed('chat')}
+            aria-pressed={activeFeed === 'chat'}
           >
             Decentralized Chat ({messages.length})
           </button>
           <button
+            type="button"
             className={`pill-btn ${activeFeed === 'sos' ? 'active' : ''}`}
             onClick={() => setActiveFeed('sos')}
+            aria-pressed={activeFeed === 'sos'}
           >
             Disaster SOS Alerts ({statuses.length})
           </button>
         </div>
         {activeFeed === 'events' && (
-          <button className="btn-chip" onClick={onClearEvents} title="Clear console">
+          <button type="button" className="btn-chip" onClick={onClearEvents} title="Clear console">
             Clear
           </button>
         )}

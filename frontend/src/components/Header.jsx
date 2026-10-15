@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Radio, Activity, GitFork, RefreshCw, Pause, Play } from 'lucide-react';
+import { Shield, Radio, Activity, RefreshCw, Pause } from 'lucide-react';
 
 export default function Header({
   state,
@@ -24,8 +24,8 @@ export default function Header({
         <div>
           <div className="title-row">
             <h1>MeshLink</h1>
-            <span className="badge badge-accent">Mission Control</span>
-            <span className={`badge ${state?.routing_strategy === 'DISTANCE_VECTOR' ? 'badge-accent' : 'badge-purple'}`}>
+            <span className="product-label">Network operations</span>
+            <span className={`badge ${state?.routing_strategy === 'DISTANCE_VECTOR' ? 'badge-accent' : 'badge-neutral'}`}>
               {routingStrat}
             </span>
           </div>
@@ -58,9 +58,10 @@ export default function Header({
 
       <div className="topbar-actions">
         <button
+          type="button"
           className={`btn ${isPolling ? 'btn-secondary' : 'btn-chip'}`}
           onClick={onTogglePolling}
-          title="Pause or resume live telemetry polling"
+          aria-label={isPolling ? 'Pause automatic telemetry sync' : 'Resume automatic telemetry sync'}
         >
           {isPolling ? (
             <>
@@ -73,11 +74,11 @@ export default function Header({
           )}
         </button>
 
-        <button className="btn btn-chip" onClick={onRefresh} title="Sync now">
-          <RefreshCw size={13} /> Sync
+        <button type="button" className="btn btn-chip" onClick={onRefresh} aria-label="Sync telemetry now">
+          <RefreshCw size={13} /> <span className="button-label">Sync</span>
         </button>
 
-        <button className="btn btn-emerald" onClick={onQuickSafe} title="Broadcast SAFE status to all peers">
+        <button type="button" className="btn btn-emerald" onClick={onQuickSafe} title="Broadcast SAFE status to all peers">
           <Shield size={14} /> I'm Safe
         </button>
       </div>

@@ -35,7 +35,7 @@ export default function DeviceRoutingPanel({ neighbors = [], routes = {}, update
         <div className="column-block">
           <div className="block-title">Computed Multi-Hop Routes ({routeEntries.length})</div>
           <div className="route-table-wrapper">
-            <table className="data-table">
+            <table className="data-table" aria-label="Computed network routes">
               <thead>
                 <tr>
                   <th>Destination</th>

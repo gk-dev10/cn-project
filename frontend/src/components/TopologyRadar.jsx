@@ -38,16 +38,20 @@ export default function TopologyRadar({
         </div>
         <div className="topology-controls">
           <button
+            type="button"
             className={`btn-chip ${routingStrategy === 'LINK_STATE' ? 'active' : ''}`}
             onClick={() => onSwitchStrategy('LINK_STATE')}
             title="Switch to Link-State Routing (Dijkstra's Shortest Path)"
+            aria-pressed={routingStrategy === 'LINK_STATE'}
           >
             Dijkstra (LS)
           </button>
           <button
+            type="button"
             className={`btn-chip ${routingStrategy === 'DISTANCE_VECTOR' ? 'active' : ''}`}
             onClick={() => onSwitchStrategy('DISTANCE_VECTOR')}
             title="Switch to Distance-Vector Routing (Bellman-Ford Algorithm)"
+            aria-pressed={routingStrategy === 'DISTANCE_VECTOR'}
           >
             Bellman-Ford (DV)
           </button>
@@ -55,11 +59,13 @@ export default function TopologyRadar({
       </div>
 
       <div className="canvas-wrapper">
-        <svg id="topologySvg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Interactive mesh network topology">
+        <svg id="topologySvg" viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="topologySvgTitle topologySvgDescription">
+          <title id="topologySvgTitle">Live mesh topology</title>
+          <desc id="topologySvgDescription">Select a node to use it as the message destination. Node colors show local, active, and offline devices.</desc>
           {/* Radar Grid Circles */}
-          <circle cx={width / 2} cy={height / 2} r="90" fill="none" stroke="rgba(56, 189, 248, 0.05)" strokeWidth="1" />
-          <circle cx={width / 2} cy={height / 2} r="180" fill="none" stroke="rgba(56, 189, 248, 0.05)" strokeWidth="1" />
-          <circle cx={width / 2} cy={height / 2} r="270" fill="none" stroke="rgba(56, 189, 248, 0.03)" strokeWidth="1" />
+          <circle cx={width / 2} cy={height / 2} r="90" fill="none" stroke="var(--border-strong)" strokeOpacity="0.38" strokeWidth="1" />
+          <circle cx={width / 2} cy={height / 2} r="180" fill="none" stroke="var(--border-strong)" strokeOpacity="0.38" strokeWidth="1" />
+          <circle cx={width / 2} cy={height / 2} r="270" fill="none" stroke="var(--border-strong)" strokeOpacity="0.24" strokeWidth="1" />
 
           {/* Links */}
           {links.map((link, idx) => {
@@ -68,7 +74,7 @@ export default function TopologyRadar({
             if (!from || !to) return null;
 
             const isRouteHop = routeHopLinks.has(`${link.source}->${link.target}`);
-            const strokeColor = isRouteHop ? '#a855f7' : link.active ? '#475569' : '#dc2626';
+            const strokeColor = isRouteHop ? 'var(--route)' : link.active ? 'var(--link)' : 'var(--danger)';
             const strokeWidth = isRouteHop ? 3 : 1.8;
 
             return (
@@ -85,8 +91,8 @@ export default function TopologyRadar({
                 <text
                   x={(from[0] + to[0]) / 2}
                   y={(from[1] + to[1]) / 2 - 6}
-                  fill="#64748b"
-                  fontFamily="'JetBrains Mono', monospace"
+                  fill="var(--text-quiet)"
+                  fontFamily="var(--font-mono)"
                   fontSize="10"
                   textAnchor="middle"
                 >
@@ -104,28 +110,37 @@ export default function TopologyRadar({
 
             const isSelf = node.is_self;
             const isActive = node.status === 'ACTIVE';
-            const nodeColor = isSelf ? '#38bdf8' : isActive ? '#10b981' : '#f43f5e';
+            const nodeColor = isSelf ? 'var(--node-self)' : isActive ? 'var(--node-peer)' : 'var(--node-offline)';
 
             return (
               <g
                 key={`node-${node.id}`}
                 className="topo-node"
                 style={{ cursor: 'pointer' }}
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelectDestination && onSelectDestination(node.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectDestination && onSelectDestination(node.id);
+                  }
+                }}
+                aria-label={`Select ${node.id}${isSelf ? ', local node' : ''}, ${node.status}, ${node.ip && node.port ? `${node.ip}:${node.port}` : 'reachable by multi-hop'}`}
                 title={`Click to target node ${node.id}`}
               >
                 {/* Pulsing Halo */}
-                <circle cx={cx} cy={cy} r="26" fill="none" stroke={nodeColor} strokeWidth="1" className="topo-node-ring" />
+                <circle cx={cx} cy={cy} r="25" fill="none" stroke={nodeColor} strokeWidth="1" className="topo-node-ring" />
 
                 {/* Center Disc */}
-                <circle cx={cx} cy={cy} r="16" fill="#090f1b" stroke={nodeColor} strokeWidth="2.5" />
+                <circle cx={cx} cy={cy} r="16" fill="var(--canvas-node)" stroke={nodeColor} strokeWidth="2.5" />
 
                 {/* Node Label */}
                 <text
                   x={cx}
                   y={cy + 30}
-                  fill="#ffffff"
-                  fontFamily="'Outfit', sans-serif"
+                  fill="var(--text-primary)"
+                  fontFamily="inherit"
                   fontWeight="700"
                   fontSize="12"
                   textAnchor="middle"
@@ -135,8 +150,8 @@ export default function TopologyRadar({
                 <text
                   x={cx}
                   y={cy + 42}
-                  fill="#94a3b8"
-                  fontFamily="'JetBrains Mono', monospace"
+                  fill="var(--text-muted)"
+                  fontFamily="var(--font-mono)"
                   fontSize="10"
                   textAnchor="middle"
                 >
@@ -157,12 +172,12 @@ export default function TopologyRadar({
 
             return (
               <g key={`pkt-anim-${idx}`}>
-                <circle cx={curX} cy={curY} r="5" fill="#38bdf8" filter="drop-shadow(0 0 6px #38bdf8)" />
+                <circle cx={curX} cy={curY} r="5" fill="var(--accent)" />
                 <text
                   x={curX}
                   y={curY - 8}
-                  fill="#38bdf8"
-                  fontFamily="'JetBrains Mono', monospace"
+                  fill="var(--accent)"
+                  fontFamily="var(--font-mono)"
                   fontSize="9"
                   fontWeight="bold"
                   textAnchor="middle"

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Send, Zap, AlertTriangle, Flame, ShieldAlert, Cpu } from 'lucide-react';
+import { Send, Zap, AlertTriangle, Flame } from 'lucide-react';
 
 export default function ShowcaseDeck({
   state,
@@ -88,28 +88,36 @@ export default function ShowcaseDeck({
       </div>
 
       {/* Showcase Tabs */}
-      <nav className="showcase-tabs" role="tablist">
+      <nav className="showcase-tabs" aria-label="Demonstration tools">
         <button
+          type="button"
           className={`tab-btn ${activeTab === 'messaging' ? 'active' : ''}`}
           onClick={() => setActiveTab('messaging')}
+          aria-pressed={activeTab === 'messaging'}
         >
           1. Message & Relay
         </button>
         <button
+          type="button"
           className={`tab-btn ${activeTab === 'gbn' ? 'active' : ''}`}
           onClick={() => setActiveTab('gbn')}
+          aria-pressed={activeTab === 'gbn'}
         >
           2. Sliding Window
         </button>
         <button
+          type="button"
           className={`tab-btn ${activeTab === 'emergency' ? 'active' : ''}`}
           onClick={() => setActiveTab('emergency')}
+          aria-pressed={activeTab === 'emergency'}
         >
           3. Disaster SOS
         </button>
         <button
+          type="button"
           className={`tab-btn ${activeTab === 'chaos' ? 'active' : ''}`}
           onClick={() => setActiveTab('chaos')}
+          aria-pressed={activeTab === 'chaos'}
         >
           4. Chaos & Healing
         </button>
@@ -127,8 +135,9 @@ export default function ShowcaseDeck({
             <form onSubmit={handleMessageSubmit} className="control-form">
               <div className="form-row">
                 <div className="form-group flex-1">
-                  <label>Destination Node ID</label>
+                  <label htmlFor="message-destination">Destination Node ID</label>
                   <input
+                    id="message-destination"
                     type="text"
                     value={destination}
                     onChange={(e) => setDestination(e.target.value)}
@@ -137,8 +146,9 @@ export default function ShowcaseDeck({
                   />
                 </div>
                 <div className="form-group flex-1">
-                  <label>Override IP:Port (Optional)</label>
+                  <label htmlFor="message-address">Override IP:Port (Optional)</label>
                   <input
+                    id="message-address"
                     type="text"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
@@ -148,8 +158,9 @@ export default function ShowcaseDeck({
               </div>
 
               <div className="form-group">
-                <label>Message Payload</label>
+                <label htmlFor="message-payload">Message Payload</label>
                 <input
+                  id="message-payload"
                   type="text"
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
@@ -161,11 +172,12 @@ export default function ShowcaseDeck({
               <div className="form-row items-center">
                 <label className="toggle-switch">
                   <input
+                    id="reliable-mode"
                     type="checkbox"
                     checked={reliable}
                     onChange={(e) => setReliable(e.target.checked)}
                   />
-                  <span className="slider"></span>
+                  <span className="slider" aria-hidden="true"></span>
                   <span className="toggle-label">Reliable Mode (ACK Retransmission)</span>
                 </label>
                 <button type="submit" className="btn btn-primary ml-auto">
@@ -176,7 +188,7 @@ export default function ShowcaseDeck({
 
             <div className="quick-status-box">
               <span className="box-label">Transmission Status:</span>
-              <span className={sendFeedback?.isError ? 'text-rose' : 'text-emerald'}>
+              <span role="status" aria-live="polite" className={sendFeedback?.isError ? 'text-rose' : 'text-emerald'}>
                 {sendFeedback?.text || 'Awaiting transmission command...'}
               </span>
             </div>
@@ -194,8 +206,9 @@ export default function ShowcaseDeck({
             <form onSubmit={handleGbnSubmit} className="control-form">
               <div className="form-row">
                 <div className="form-group flex-1">
-                  <label>Destination Node</label>
+                  <label htmlFor="gbn-destination">Destination Node</label>
                   <input
+                    id="gbn-destination"
                     type="text"
                     value={gbnDest}
                     onChange={(e) => setGbnDest(e.target.value)}
@@ -204,8 +217,9 @@ export default function ShowcaseDeck({
                   />
                 </div>
                 <div className="form-group">
-                  <label>Total Chunks</label>
+                  <label htmlFor="gbn-chunks">Total Chunks</label>
                   <input
+                    id="gbn-chunks"
                     type="number"
                     min="2"
                     max="20"
@@ -214,8 +228,9 @@ export default function ShowcaseDeck({
                   />
                 </div>
                 <div className="form-group">
-                  <label>Window Size</label>
+                  <label htmlFor="gbn-window-size">Window Size</label>
                   <input
+                    id="gbn-window-size"
                     type="number"
                     min="1"
                     max="8"
@@ -226,8 +241,9 @@ export default function ShowcaseDeck({
               </div>
 
               <div className="form-group">
-                <label>Payload to Chunk & Stream</label>
+                <label htmlFor="gbn-payload">Payload to Chunk & Stream</label>
                 <input
+                  id="gbn-payload"
                   type="text"
                   value={gbnPayload}
                   onChange={(e) => setGbnPayload(e.target.value)}
@@ -237,11 +253,12 @@ export default function ShowcaseDeck({
               <div className="form-row items-center">
                 <label className="toggle-switch">
                   <input
+                    id="adaptive-mode"
                     type="checkbox"
                     checked={gbnAdaptive}
                     onChange={(e) => setGbnAdaptive(e.target.checked)}
                   />
-                  <span className="slider"></span>
+                  <span className="slider" aria-hidden="true"></span>
                   <span className="toggle-label">Enable Adaptive Window Control (AIMD)</span>
                 </label>
                 <button type="submit" className="btn btn-primary ml-auto">
@@ -293,9 +310,10 @@ export default function ShowcaseDeck({
 
             {/* Module 19: Chunked File Transfer */}
             <div className="quick-status-box mt-3">
-              <span className="box-label">Module 19: File Transfer & SHA256 Integrity Verification:</span>
+              <label htmlFor="file-path" className="box-label">Module 19: File Transfer & SHA256 Integrity Verification:</label>
               <div className="form-row mt-1 items-center">
                 <input
+                  id="file-path"
                   type="text"
                   value={filePath}
                   onChange={(e) => setFilePath(e.target.value)}
@@ -345,8 +363,9 @@ export default function ShowcaseDeck({
 
             <form onSubmit={handleCustomSos} className="control-form mt-3">
               <div className="form-group">
-                <label>Emergency Situation Report</label>
+                <label htmlFor="sos-message">Emergency Situation Report</label>
                 <input
+                  id="sos-message"
                   type="text"
                   value={sosMsg}
                   onChange={(e) => setSosMsg(e.target.value)}
@@ -355,8 +374,9 @@ export default function ShowcaseDeck({
               </div>
               <div className="form-row">
                 <div className="form-group flex-1">
-                  <label>Latitude</label>
+                  <label htmlFor="sos-latitude">Latitude</label>
                   <input
+                    id="sos-latitude"
                     type="number"
                     step="0.0001"
                     value={sosLat}
@@ -364,8 +384,9 @@ export default function ShowcaseDeck({
                   />
                 </div>
                 <div className="form-group flex-1">
-                  <label>Longitude</label>
+                  <label htmlFor="sos-longitude">Longitude</label>
                   <input
+                    id="sos-longitude"
                     type="number"
                     step="0.0001"
                     value={sosLon}
@@ -373,8 +394,9 @@ export default function ShowcaseDeck({
                   />
                 </div>
                 <div className="form-group flex-1">
-                  <label>Location Tag</label>
+                  <label htmlFor="sos-location-tag">Location Tag</label>
                   <input
+                    id="sos-location-tag"
                     type="text"
                     value={sosLabel}
                     onChange={(e) => setSosLabel(e.target.value)}
@@ -404,6 +426,7 @@ export default function ShowcaseDeck({
                 </div>
                 <input
                   type="range"
+                  aria-label="Packet drop rate"
                   min="0"
                   max="60"
                   step="5"
@@ -419,6 +442,7 @@ export default function ShowcaseDeck({
                 </div>
                 <input
                   type="range"
+                  aria-label="Artificial network delay"
                   min="0"
                   max="400"
                   step="20"
@@ -453,6 +477,7 @@ export default function ShowcaseDeck({
               <span className="box-label">Simulate Node Failure (Demonstrate Self-Healing):</span>
               <div className="form-row mt-1">
                 <select
+                  aria-label="Select neighbor node to simulate failure"
                   value={severNodeId}
                   onChange={(e) => setSeverNodeId(e.target.value)}
                   className="flex-1"
