@@ -25,7 +25,9 @@ from core.constants import (
     DEFAULT_DASHBOARD_HOST,
     DEFAULT_DASHBOARD_PORT,
     DEFAULT_GBN_WINDOW_SIZE,
+    DEFAULT_LOCATION_LABEL,
     DEFAULT_TTL,
+    NodeStatus,
     PacketType,
 )
 from core.node import MeshNode
@@ -179,14 +181,14 @@ class DashboardServer:
 
         # Check direct neighbor.
         neighbor = self.neighbor_manager.get_neighbor(destination)
-        if neighbor and neighbor.is_active:
+        if neighbor and neighbor.status == NodeStatus.ACTIVE.value:
             return (neighbor.ip, neighbor.port)
 
         # Check next hop in routing table.
         next_hop = self.node.get_next_hop(destination)
         if next_hop:
             hop_neighbor = self.neighbor_manager.get_neighbor(next_hop)
-            if hop_neighbor and hop_neighbor.is_active:
+            if hop_neighbor and hop_neighbor.status == NodeStatus.ACTIVE.value:
                 return (hop_neighbor.ip, hop_neighbor.port)
 
         # Fallback to configured peer list.
@@ -363,7 +365,7 @@ class DashboardServer:
                     controller = AdaptiveWindowController(sender, tracker)
                     controller.start()
 
-                chunk_size = max(1, len(message) // chunks)
+                chunk_size = max(1, (len(message) + chunks - 1) // chunks)
                 payloads = [message[i : i + chunk_size] for i in range(0, len(message), chunk_size)]
                 if not payloads:
                     payloads = [message]
@@ -390,9 +392,10 @@ class DashboardServer:
                     tx_info["retransmissions"] = stats.retransmissions
                     tx_info["window_size"] = sender.window_size
                     if controller:
-                        c_stats = controller.stats()
-                        tx_info["srtt"] = round(c_stats.srtt, 4)
-                        tx_info["rto"] = round(c_stats.rto, 4)
+                        snapshot = controller.current_snapshot()
+                        if snapshot:
+                            tx_info["srtt"] = round(snapshot.srtt, 4)
+                            tx_info["rto"] = round(snapshot.rto, 4)
 
                     if stats.packets_acked >= len(payloads):
                         tx_info["status"] = "completed"
@@ -559,10 +562,11 @@ class DashboardServer:
             return {"sent": False, "reason": "status service is not configured"}
 
         if self.location_service and (latitude is not None or longitude is not None or location_label):
-            self.location_service.update_coordinates(
-                latitude=latitude if latitude is not None else self.location_service.latitude,
-                longitude=longitude if longitude is not None else self.location_service.longitude,
-                label=location_label or self.location_service.label,
+            current_location = self.location_service.current_location()
+            self.location_service.set_location(
+                latitude=latitude if latitude is not None else current_location.latitude if current_location else 0.0,
+                longitude=longitude if longitude is not None else current_location.longitude if current_location else 0.0,
+                label=location_label or (current_location.label if current_location else DEFAULT_LOCATION_LABEL),
             )
 
         location = self.location_service.current_payload() if self.location_service else None

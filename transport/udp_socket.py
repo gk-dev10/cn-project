@@ -141,7 +141,11 @@ class UDPSocket:
             try:
                 result = self.receive_packet()
             except OSError as exc:
-                if self._running.is_set() and self.on_error:
+                if not self._running.is_set():
+                    break
+                if getattr(exc, "winerror", None) in {10053, 10054}:
+                    continue
+                if self.on_error:
                     self.on_error(exc)
                 break
             except PacketError as exc:

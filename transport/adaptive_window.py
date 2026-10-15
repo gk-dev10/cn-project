@@ -156,6 +156,7 @@ class AdaptiveWindowController:
         self.rtt_estimator = RTTEstimator()
 
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._history: deque[AdaptiveSnapshot] = deque(maxlen=100)
         self._prev_stats: Optional[WindowStats] = None
@@ -167,6 +168,7 @@ class AdaptiveWindowController:
     def start(self) -> None:
         if self._running.is_set():
             return
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._evaluation_loop,
@@ -177,6 +179,7 @@ class AdaptiveWindowController:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=2)
         self._thread = None
@@ -214,7 +217,7 @@ class AdaptiveWindowController:
     def _evaluation_loop(self) -> None:
         while self._running.is_set():
             self._evaluate()
-            self._running.wait(self.evaluation_interval)
+            self._stop_event.wait(self.evaluation_interval)
 
     def _evaluate(self) -> None:
         stats = self.sender.stats()

@@ -77,6 +77,7 @@ class ReliableTransport:
         self._ack_sequence_numbers = itertools.count(1)
         self._lock = threading.RLock()
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
@@ -89,6 +90,7 @@ class ReliableTransport:
 
         self._ensure_socket()
         self.udp_socket.add_packet_handler(self.handle_packet)
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._retransmission_loop,
@@ -99,6 +101,7 @@ class ReliableTransport:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self.udp_socket:
             self.udp_socket.remove_packet_handler(self.handle_packet)
         if self._thread and self._thread is not threading.current_thread():
@@ -205,7 +208,7 @@ class ReliableTransport:
     def _retransmission_loop(self) -> None:
         while self._running.is_set():
             self._retransmit_expired_packets()
-            self._running.wait(self.check_interval)
+            self._stop_event.wait(self.check_interval)
 
     def _retransmit_expired_packets(self) -> None:
         now = time.time()

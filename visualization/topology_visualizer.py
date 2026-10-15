@@ -25,6 +25,8 @@ class VisualNode:
     node_id: str
     status: str
     is_self: bool
+    ip: str
+    port: int
     x: float
     y: float
 
@@ -33,6 +35,8 @@ class VisualNode:
             "id": self.node_id,
             "status": self.status,
             "is_self": self.is_self,
+            "ip": self.ip,
+            "port": self.port,
             "x": self.x,
             "y": self.y,
         }
@@ -87,6 +91,8 @@ class TopologyVisualizer:
                 node_id=node_id,
                 status=self._node_status(node_id),
                 is_self=node_id == self.node.node_id,
+                ip=self._node_address(node_id)[0],
+                port=self._node_address(node_id)[1],
                 x=positions[node_id][0],
                 y=positions[node_id][1],
             )
@@ -220,6 +226,14 @@ class TopologyVisualizer:
             return neighbor.status
         return NodeStatus.ACTIVE.value
 
+    def _node_address(self, node_id: str) -> tuple[str, int]:
+        if node_id == self.node.node_id:
+            return self.node.ip, self.node.port
+        neighbor = self.node.neighbors.get(node_id)
+        if neighbor:
+            return neighbor.ip, neighbor.port
+        return "", 0
+
 
 def _circular_layout(node_ids: list[str]) -> dict[str, tuple[float, float]]:
     if not node_ids:
@@ -247,4 +261,3 @@ def _status_color(status: str, is_self: bool = False) -> str:
     if status == NodeStatus.DISCONNECTED.value:
         return "#f59e0b"
     return "#94a3b8"
-

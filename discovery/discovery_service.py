@@ -43,6 +43,7 @@ class DiscoveryService:
         self.on_neighbor_discovered = on_neighbor_discovered
         self._sequence_numbers = itertools.count(1)
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
@@ -55,6 +56,7 @@ class DiscoveryService:
 
         self._ensure_socket()
         self.udp_socket.add_packet_handler(self.handle_packet)
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._run,
@@ -65,6 +67,7 @@ class DiscoveryService:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self.udp_socket:
             self.udp_socket.remove_packet_handler(self.handle_packet)
         if self._thread and self._thread is not threading.current_thread():
@@ -103,7 +106,7 @@ class DiscoveryService:
     def _run(self) -> None:
         while self._running.is_set():
             self.send_discovery()
-            self._running.wait(self.interval)
+            self._stop_event.wait(self.interval)
 
     def _build_packet(self, packet_type: PacketType) -> dict:
         return create_packet(
@@ -130,6 +133,9 @@ class DiscoveryService:
         advertised_ip = str(payload.get("ip") or address[0])
         ip = address[0] if advertised_ip in {"0.0.0.0", "::", ""} else advertised_ip
         port = int(payload.get("port") or address[1])
+        if self.udp_socket and self.udp_socket.is_running:
+            if (ip, port) == self.udp_socket.local_address:
+                return None
         return self.neighbor_manager.update_neighbor(node_id=node_id, ip=ip, port=port)
 
     def _discovery_targets(self) -> list[tuple[str, int]]:

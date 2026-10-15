@@ -155,6 +155,7 @@ class SlidingWindowSender:
 
         # Lifecycle
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._timer_thread: Optional[threading.Thread] = None
 
         # Register ACK handler
@@ -167,6 +168,7 @@ class SlidingWindowSender:
     def start(self) -> None:
         if self._running.is_set():
             return
+        self._stop_event.clear()
         self._running.set()
         if not self._handler_registered:
             self.udp_socket.add_packet_handler(self._handle_ack_packet)
@@ -180,6 +182,7 @@ class SlidingWindowSender:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self._handler_registered:
             self.udp_socket.remove_packet_handler(self._handle_ack_packet)
             self._handler_registered = False
@@ -308,7 +311,7 @@ class SlidingWindowSender:
     def _timeout_loop(self) -> None:
         while self._running.is_set():
             self._check_timeout()
-            self._running.wait(self.check_interval)
+            self._stop_event.wait(self.check_interval)
 
     def _check_timeout(self) -> None:
         now = time.time()

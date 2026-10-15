@@ -44,6 +44,63 @@ class NeighborManagerTests(unittest.TestCase):
 
 
 class DiscoveryServiceTests(unittest.TestCase):
+    def test_periodic_discovery_is_rate_limited_and_stops_promptly(self):
+        node = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=0)
+        node.start_networking()
+        sent_packets = []
+        send_packet = node.udp_socket.send_packet
+
+        def record_send(packet, address):
+            sent_packets.append(packet)
+            return send_packet(packet, address)
+
+        node.udp_socket.send_packet = record_send
+        service = DiscoveryService(
+            node,
+            udp_socket=node.udp_socket,
+            broadcast_address=None,
+            targets=[("127.0.0.1", 65500)],
+            interval=0.05,
+        )
+
+        try:
+            service.start()
+            time.sleep(0.16)
+            service.stop()
+
+            self.assertGreaterEqual(len(sent_packets), 2)
+            self.assertLessEqual(len(sent_packets), 6)
+            self.assertFalse(service.is_running)
+        finally:
+            service.stop()
+            node.stop_networking()
+
+    def test_discovery_ignores_packets_from_its_own_endpoint(self):
+        node = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=0)
+        node.start_networking()
+        manager = NeighborManager(node.neighbors, self_node_id=node.node_id)
+        service = DiscoveryService(
+            node,
+            udp_socket=node.udp_socket,
+            neighbor_manager=manager,
+            broadcast_address=None,
+        )
+        packet = create_packet(
+            PacketType.DISCOVERY_RESPONSE,
+            source="STALE_NODE_ID",
+            payload={
+                "node_id": "STALE_NODE_ID",
+                "ip": "127.0.0.1",
+                "port": node.port,
+            },
+        )
+
+        try:
+            service.handle_packet(packet, ("127.0.0.1", node.port))
+            self.assertEqual(manager.all_neighbors(), [])
+        finally:
+            node.stop_networking()
+
     def test_nodes_discover_each_other_over_loopback_targets(self):
         node_a = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=0)
         node_b = MeshNode(node_id="DEVICE_B", ip="127.0.0.1", port=0)
@@ -90,6 +147,27 @@ class DiscoveryServiceTests(unittest.TestCase):
 
 
 class HeartbeatServiceTests(unittest.TestCase):
+    def test_heartbeat_ignores_packets_from_its_own_endpoint(self):
+        node = MeshNode(node_id="DEVICE_A", ip="127.0.0.1", port=0)
+        node.start_networking()
+        manager = NeighborManager(node.neighbors, self_node_id=node.node_id)
+        heartbeat = HeartbeatService(node, udp_socket=node.udp_socket, neighbor_manager=manager)
+        packet = create_packet(
+            PacketType.HEARTBEAT,
+            source="STALE_NODE_ID",
+            payload={
+                "node_id": "STALE_NODE_ID",
+                "ip": "127.0.0.1",
+                "port": node.port,
+            },
+        )
+
+        try:
+            heartbeat.handle_packet(packet, ("127.0.0.1", node.port))
+            self.assertEqual(manager.all_neighbors(), [])
+        finally:
+            node.stop_networking()
+
     def test_heartbeat_packet_refreshes_neighbor(self):
         node_b = MeshNode(node_id="DEVICE_B", ip="127.0.0.1", port=5002)
         manager = NeighborManager(node_b.neighbors, self_node_id=node_b.node_id)

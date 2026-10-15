@@ -59,6 +59,7 @@ class SelfHealingManager:
         self.on_recovery = on_recovery
         self._stats = SelfHealingStats()
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.RLock()
 
@@ -69,6 +70,7 @@ class SelfHealingManager:
     def start(self) -> None:
         if self.is_running:
             return
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._run,
@@ -79,6 +81,7 @@ class SelfHealingManager:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=1)
         self._thread = None
@@ -150,5 +153,4 @@ class SelfHealingManager:
     def _run(self) -> None:
         while self._running.is_set():
             self.check_and_heal()
-            self._running.wait(self.check_interval)
-
+            self._stop_event.wait(self.check_interval)

@@ -140,7 +140,7 @@ export default function TopologyRadar({
                   fontSize="10"
                   textAnchor="middle"
                 >
-                  {node.ip}:{node.port}
+                  {node.ip && node.port ? `${node.ip}:${node.port}` : 'MULTI-HOP'}
                 </text>
               </g>
             );

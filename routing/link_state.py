@@ -92,6 +92,7 @@ class LinkStateService:
         self._lsa_sequence = itertools.count(1)
         self._ack_seq = itertools.count(1)
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._handler_registered = False
 
@@ -114,6 +115,7 @@ class LinkStateService:
         if not self._handler_registered:
             self.udp_socket.add_packet_handler(self._handle_packet)
             self._handler_registered = True
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._run_loop,
@@ -124,6 +126,7 @@ class LinkStateService:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self._handler_registered and self.udp_socket:
             self.udp_socket.remove_packet_handler(self._handle_packet)
             self._handler_registered = False
@@ -284,7 +287,7 @@ class LinkStateService:
     def _run_loop(self) -> None:
         while self._running.is_set():
             self.announce()
-            self._running.wait(self.interval)
+            self._stop_event.wait(self.interval)
 
     def _ensure_socket(self) -> None:
         if self.udp_socket:

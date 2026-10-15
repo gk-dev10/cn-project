@@ -46,6 +46,7 @@ class HeartbeatService:
         self.on_neighbor_lost = on_neighbor_lost
         self._sequence_numbers = itertools.count(1)
         self._running = threading.Event()
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
@@ -58,6 +59,7 @@ class HeartbeatService:
 
         self._ensure_socket()
         self.udp_socket.add_packet_handler(self.handle_packet)
+        self._stop_event.clear()
         self._running.set()
         self._thread = threading.Thread(
             target=self._run,
@@ -68,6 +70,7 @@ class HeartbeatService:
 
     def stop(self) -> None:
         self._running.clear()
+        self._stop_event.set()
         if self.udp_socket:
             self.udp_socket.remove_packet_handler(self.handle_packet)
         if self._thread and self._thread is not threading.current_thread():
@@ -102,6 +105,9 @@ class HeartbeatService:
         advertised_ip = str(payload.get("ip") or address[0])
         ip = address[0] if advertised_ip in {"0.0.0.0", "::", ""} else advertised_ip
         port = int(payload.get("port") or address[1])
+        if self.udp_socket and self.udp_socket.is_running:
+            if (ip, port) == self.udp_socket.local_address:
+                return
         self.neighbor_manager.update_neighbor(node_id=node_id, ip=ip, port=port)
 
     def _ensure_socket(self) -> None:
@@ -127,7 +133,7 @@ class HeartbeatService:
                 self.check_failures()
                 next_stale_check_at = now + self.stale_check_interval
 
-            self._running.wait(min(self.interval, self.stale_check_interval, 0.2))
+            self._stop_event.wait(min(self.interval, self.stale_check_interval, 0.2))
 
     def _build_packet(self) -> dict:
         return create_packet(
@@ -154,4 +160,3 @@ class HeartbeatService:
         if self.node.ip in {"0.0.0.0", "::"} and self.udp_socket:
             return self.udp_socket.local_address[0]
         return self.node.ip
-
